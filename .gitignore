@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+
+node_modules/
+.vinext/
+.open-next/
+dist/
+.next/
+coverage/
+
+.DS_Store
+Thumbs.db
+*.log
+
+.tmp_prd/
+~$*.docx

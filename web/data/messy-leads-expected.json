@@ -1,0 +1,26 @@
+{
+  "asOfDate": "2026-07-20",
+  "description": "Human-labeled benchmark for the 20-row messy-notes CSV. This file is kept separate from the upload so labels are never sent as lead data.",
+  "records": [
+    { "rowNumber": 2, "followUpRequested": true, "followUpDate": "2026-07-21", "motivation": "possible_sale", "doNotContact": false, "recommendedAction": "call" },
+    { "rowNumber": 3, "followUpRequested": true, "followUpDate": "2026-07-28", "motivation": "unclear", "doNotContact": false, "recommendedAction": "call" },
+    { "rowNumber": 4, "followUpRequested": true, "followUpDate": "2026-07-18", "motivation": "possible_sale", "doNotContact": false, "recommendedAction": "call" },
+    { "rowNumber": 5, "followUpRequested": false, "followUpDate": null, "motivation": "not_selling", "doNotContact": false, "recommendedAction": "wait" },
+    { "rowNumber": 6, "followUpRequested": false, "followUpDate": null, "motivation": "possible_sale", "doNotContact": false, "recommendedAction": "review" },
+    { "rowNumber": 7, "followUpRequested": false, "followUpDate": null, "motivation": "not_selling", "doNotContact": true, "recommendedAction": "do_not_contact" },
+    { "rowNumber": 8, "followUpRequested": true, "followUpDate": "2026-07-24", "motivation": "unclear", "doNotContact": false, "recommendedAction": "call" },
+    { "rowNumber": 9, "followUpRequested": false, "followUpDate": null, "motivation": "unclear", "doNotContact": false, "recommendedAction": "review" },
+    { "rowNumber": 10, "followUpRequested": true, "followUpDate": "2026-08-03", "motivation": "possible_sale", "doNotContact": false, "recommendedAction": "call" },
+    { "rowNumber": 11, "followUpRequested": false, "followUpDate": null, "motivation": "unclear", "doNotContact": true, "recommendedAction": "do_not_contact" },
+    { "rowNumber": 12, "followUpRequested": true, "followUpDate": "2026-08-03", "motivation": "possible_sale", "doNotContact": false, "recommendedAction": "call" },
+    { "rowNumber": 13, "followUpRequested": false, "followUpDate": null, "motivation": "unclear", "doNotContact": false, "recommendedAction": "review" },
+    { "rowNumber": 14, "followUpRequested": false, "followUpDate": null, "motivation": "unclear", "doNotContact": false, "recommendedAction": "review" },
+    { "rowNumber": 15, "followUpRequested": false, "followUpDate": null, "motivation": "possible_sale", "doNotContact": false, "recommendedAction": "review" },
+    { "rowNumber": 16, "followUpRequested": false, "followUpDate": null, "motivation": "unclear", "doNotContact": true, "recommendedAction": "do_not_contact" },
+    { "rowNumber": 17, "followUpRequested": true, "followUpDate": "2026-07-24", "motivation": "unclear", "doNotContact": false, "recommendedAction": "call" },
+    { "rowNumber": 18, "followUpRequested": false, "followUpDate": null, "motivation": "not_selling", "doNotContact": false, "recommendedAction": "wait" },
+    { "rowNumber": 19, "followUpRequested": true, "followUpDate": null, "motivation": "possible_sale", "doNotContact": false, "recommendedAction": "review" },
+    { "rowNumber": 20, "followUpRequested": false, "followUpDate": null, "motivation": "unclear", "doNotContact": false, "recommendedAction": "review" },
+    { "rowNumber": 21, "followUpRequested": true, "followUpDate": "2026-07-20", "motivation": "possible_sale", "doNotContact": false, "recommendedAction": "call" }
+  ]
+}

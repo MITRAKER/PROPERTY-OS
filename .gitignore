@@ -12,6 +12,7 @@ coverage/
 .DS_Store
 Thumbs.db
 *.log
+*.tsbuildinfo
 
 .tmp_prd/
 ~$*.docx

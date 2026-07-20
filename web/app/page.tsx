@@ -1,14 +1,7 @@
 "use client";
 
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { BriefingResult } from "../lib/briefing";
-
-const demoCsv = `address,owner_name,last_contact,follow_up_date,notes
-123 Main Street,Sara Patel,2026-06-20,2026-07-10,"Asked me to call back after July 4. She inherited the house and is considering selling this summer."
-45 Farmers Boulevard,David Chen,2026-06-01,2026-07-15,"Owner mentioned an open DOB violation and asked me to follow up with possible options."
-88 Linden Avenue,Elena Ruiz,2026-05-12,2026-07-18,"Estate is in probate. Family wants to review a listing proposal once paperwork is organized."
-17 Hillside Road,Marcus Green,2026-07-12,2026-07-28,"Met at a community event. Curious about neighborhood values but no selling timeline yet."
-302 Beach 44th Street,Nadia Williams,2026-07-02,,"Absentee owner. Rental is currently occupied and they may consider an offer next year."`;
 
 function formatDate(value: string | null) {
   if (!value) return "Not recorded";
@@ -20,12 +13,26 @@ function formatDate(value: string | null) {
   }).format(new Date(`${value}T00:00:00Z`));
 }
 
+function providerName(briefing: BriefingResult) {
+  if (briefing.metrics.provider === "local_fallback") return "Local extraction fallback";
+  if (briefing.metrics.model.includes("haiku-4-5")) return "Claude Haiku 4.5";
+  return briefing.metrics.model;
+}
+
+function costLabel(value: number) {
+  if (value === 0) return "$0.0000";
+  return `$${value.toFixed(4)}`;
+}
+
 export default function Home() {
   const [csvText, setCsvText] = useState("");
   const [fileName, setFileName] = useState("");
   const [briefing, setBriefing] = useState<BriefingResult | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [audioState, setAudioState] = useState<"idle" | "playing" | "paused">("idle");
+  const [speechSupported, setSpeechSupported] = useState(false);
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   const generatedLabel = useMemo(() => {
     if (!briefing) return "";
@@ -38,24 +45,52 @@ export default function Home() {
     }).format(new Date(briefing.generatedAt));
   }, [briefing]);
 
+  const audioScript = useMemo(() => {
+    if (!briefing) return "";
+    const intro = `Good morning. Property OS reviewed ${briefing.importedCount} property records. Here are today's ${briefing.priorities.length} priorities.`;
+    const properties = briefing.priorities.map((priority) =>
+      `Priority ${priority.rank}. ${priority.address}, owner ${priority.ownerName}. ${priority.headline}. ${priority.recommendedAction}`,
+    );
+    const close = briefing.manualReviewCount > 0
+      ? `${briefing.manualReviewCount} records need manual review. No outreach has been sent.`
+      : "No outreach has been sent.";
+    return [intro, ...properties, close].join(" ");
+  }, [briefing]);
+
+  useEffect(() => {
+    const supportCheck = window.setTimeout(() => setSpeechSupported("speechSynthesis" in window), 0);
+    return () => {
+      window.clearTimeout(supportCheck);
+      if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
+    };
+  }, []);
+
   async function handleFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-
+    stopAudio();
     setError("");
     setBriefing(null);
     setFileName(file.name);
     setCsvText(await file.text());
   }
 
-  function useDemoLeads() {
-    setCsvText(demoCsv);
-    setFileName("property-os-demo-leads.csv");
-    setBriefing(null);
+  async function useDemoLeads() {
+    stopAudio();
     setError("");
+    setBriefing(null);
+    try {
+      const response = await fetch("/messy-leads.csv");
+      if (!response.ok) throw new Error("The demo CSV could not be loaded.");
+      setCsvText(await response.text());
+      setFileName("messy-leads.csv");
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "The demo CSV could not be loaded.");
+    }
   }
 
   async function generate() {
+    stopAudio();
     setLoading(true);
     setError("");
     try {
@@ -75,6 +110,37 @@ export default function Home() {
     }
   }
 
+  function playAudio() {
+    if (!audioScript || !speechSupported) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(audioScript);
+    utterance.rate = 0.96;
+    utterance.pitch = 1;
+    utterance.onend = () => setAudioState("idle");
+    utterance.onerror = () => setAudioState("idle");
+    utteranceRef.current = utterance;
+    window.speechSynthesis.speak(utterance);
+    setAudioState("playing");
+  }
+
+  function pauseAudio() {
+    if (!speechSupported || audioState !== "playing") return;
+    window.speechSynthesis.pause();
+    setAudioState("paused");
+  }
+
+  function resumeAudio() {
+    if (!speechSupported || audioState !== "paused") return;
+    window.speechSynthesis.resume();
+    setAudioState("playing");
+  }
+
+  function stopAudio() {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
+    utteranceRef.current = null;
+    setAudioState("idle");
+  }
+
   return (
     <main>
       <header className="site-header">
@@ -90,13 +156,13 @@ export default function Home() {
           <p className="eyebrow">One list. Three priorities. Clear evidence.</p>
           <h1>Turn forgotten follow-ups into today&apos;s first calls.</h1>
           <p className="hero-description">
-            Import your property leads. Property OS reads the notes, checks follow-up timing,
-            and returns the three records that deserve attention now.
+            Import property leads. Property OS extracts messy notes, protects do-not-contact
+            records, and returns the three properties that deserve attention now.
           </p>
 
           <div className="promise-row" aria-label="Product promises">
             <span>Evidence shown</span>
-            <span>No opaque score</span>
+            <span>Do-not-contact protected</span>
             <span>No automatic outreach</span>
           </div>
         </div>
@@ -117,23 +183,21 @@ export default function Home() {
             <input id="lead-file" data-testid="lead-file" type="file" accept=".csv,text/csv" onChange={handleFile} />
           </label>
 
-          <button className="text-button" type="button" onClick={useDemoLeads}>
-            Use demo leads instead
-          </button>
+          <div className="demo-actions">
+            <button className="text-button" type="button" onClick={useDemoLeads}>
+              Use 20 messy demo leads
+            </button>
+            <a className="text-link" href="/messy-leads.csv" download>Download sample CSV</a>
+          </div>
 
           {error && <p className="error-message" role="alert">{error}</p>}
 
-          <button
-            className="primary-button"
-            type="button"
-            onClick={generate}
-            disabled={!csvText || loading}
-          >
-            {loading ? "Analyzing records…" : "Generate morning briefing"}
-            <span aria-hidden="true">→</span>
+          <button className="primary-button" type="button" onClick={generate} disabled={!csvText || loading}>
+            {loading ? "Extracting and ranking..." : "Generate morning briefing"}
+            <span aria-hidden="true">-&gt;</span>
           </button>
 
-          <p className="privacy-note">Your CSV is processed only to produce this briefing.</p>
+          <p className="privacy-note">No message or call is sent. The agent reviews every recommendation.</p>
         </div>
       </section>
 
@@ -146,7 +210,7 @@ export default function Home() {
           {briefing && (
             <div className="import-summary">
               <strong>{briefing.importedCount}</strong> records imported
-              {briefing.rejectedRows.length > 0 && <span> · {briefing.rejectedRows.length} skipped</span>}
+              {briefing.rejectedRows.length > 0 && <span> / {briefing.rejectedRows.length} skipped</span>}
             </div>
           )}
         </div>
@@ -160,34 +224,52 @@ export default function Home() {
           </div>
         ) : (
           <>
-            <p className="generated-time">Generated {generatedLabel}</p>
+            <div className="result-toolbar">
+              <div>
+                <p className="generated-time">Generated {generatedLabel}</p>
+                <span className={`provider-badge ${briefing.metrics.provider}`} data-testid="provider-badge">
+                  {providerName(briefing)}
+                </span>
+              </div>
+              <div className="audio-controls" aria-label="Audio briefing controls">
+                <span>Audio briefing</span>
+                {audioState === "idle" && <button type="button" onClick={playAudio} disabled={!speechSupported}>Play</button>}
+                {audioState === "playing" && <button type="button" onClick={pauseAudio}>Pause</button>}
+                {audioState === "paused" && <button type="button" onClick={resumeAudio}>Resume</button>}
+                <button type="button" onClick={stopAudio} disabled={audioState === "idle"}>Stop</button>
+              </div>
+            </div>
+
+            {briefing.metrics.warning && <p className="run-warning" role="status">{briefing.metrics.warning}</p>}
+
+            <div className="metrics-grid" data-testid="run-metrics">
+              <div><span>Latency</span><strong>{briefing.metrics.latencyMs.toLocaleString()} ms</strong></div>
+              <div><span>Tokens</span><strong>{(briefing.metrics.inputTokens + briefing.metrics.outputTokens).toLocaleString()}</strong></div>
+              <div><span>Est. API cost</span><strong>{costLabel(briefing.metrics.estimatedCostUsd)}</strong></div>
+              <div><span>Manual review</span><strong>{briefing.manualReviewCount}</strong></div>
+              <div><span>DNC excluded</span><strong>{briefing.doNotContactCount}</strong></div>
+              <div><span>Opus fallbacks</span><strong>{briefing.metrics.fallbackCount}</strong></div>
+            </div>
+
             <div className="priority-grid" data-testid="priority-grid">
               {briefing.priorities.map((priority) => (
                 <article className="priority-card" key={priority.address} data-rank={priority.rank}>
                   <div className="card-topline">
                     <span className="rank">0{priority.rank}</span>
-                    <span className="priority-pill">Call priority</span>
+                    <span className={`confidence-pill ${priority.confidence}`}>{priority.confidence} confidence</span>
                   </div>
                   <h3>{priority.address}</h3>
                   <p className="owner-name">{priority.ownerName}</p>
                   <p className="headline">{priority.headline}</p>
 
                   <dl className="date-grid">
-                    <div>
-                      <dt>Last contact</dt>
-                      <dd>{formatDate(priority.lastContact)}</dd>
-                    </div>
-                    <div>
-                      <dt>Follow-up</dt>
-                      <dd>{formatDate(priority.followUpDate)}</dd>
-                    </div>
+                    <div><dt>Last contact</dt><dd>{formatDate(priority.lastContact)}</dd></div>
+                    <div><dt>Follow-up</dt><dd>{formatDate(priority.followUpDate)}</dd></div>
                   </dl>
 
                   <div className="card-section">
                     <h4>Why it surfaced</h4>
-                    <ul>
-                      {priority.reasons.map((reason) => <li key={reason}>{reason}</li>)}
-                    </ul>
+                    <ul>{priority.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
                   </div>
 
                   <div className="evidence-block">
@@ -207,7 +289,7 @@ export default function Home() {
       </section>
 
       <footer>
-        <span>Property OS · Property-centered intelligence</span>
+        <span>Property OS / Property-centered intelligence</span>
         <span>Recommendations require agent review before action.</span>
       </footer>
     </main>

@@ -1,3 +1,6 @@
+import { extractLocally } from "./extraction.ts";
+import type { Confidence, ExtractionMetrics, LeadExtraction } from "./extraction.ts";
+
 export type LeadRecord = {
   address: string;
   ownerName: string;
@@ -17,11 +20,13 @@ export type BriefingPriority = {
   address: string;
   ownerName: string;
   headline: string;
+  summary: string;
   reasons: string[];
   evidence: string[];
   recommendedAction: string;
   lastContact: string | null;
   followUpDate: string | null;
+  confidence: Confidence;
 };
 
 export type BriefingResult = {
@@ -29,6 +34,9 @@ export type BriefingResult = {
   rejectedRows: RejectedRow[];
   generatedAt: string;
   priorities: BriefingPriority[];
+  metrics: ExtractionMetrics;
+  manualReviewCount: number;
+  doNotContactCount: number;
 };
 
 type RankedLead = Omit<BriefingPriority, "rank"> & { score: number };
@@ -96,10 +104,7 @@ export function parseLeadCsv(csvText: string): {
 
   const headers = rows[0].map(normalizeHeader);
   const columns = Object.fromEntries(
-    Object.entries(headerAliases).map(([field, aliases]) => [
-      field,
-      findColumn(headers, aliases),
-    ]),
+    Object.entries(headerAliases).map(([field, aliases]) => [field, findColumn(headers, aliases)]),
   ) as Record<keyof Omit<LeadRecord, "rowNumber">, number>;
 
   if (columns.address < 0 || columns.notes < 0) {
@@ -133,15 +138,12 @@ export function parseLeadCsv(csvText: string): {
     });
   });
 
-  if (leads.length === 0) {
-    throw new Error("No valid property records were found in the CSV.");
-  }
-
+  if (leads.length === 0) throw new Error("No valid property records were found in the CSV.");
   return { leads, rejectedRows };
 }
 
-function parseDate(value: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+function parseDate(value: string | null) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
@@ -154,61 +156,54 @@ function pluralizeDays(value: number) {
   return `${value} day${value === 1 ? "" : "s"}`;
 }
 
-function rankLead(lead: LeadRecord, now: Date): RankedLead {
+const signalDefinitions: Record<string, { points: number; reason: string }> = {
+  inheritance_or_estate: { points: 28, reason: "Notes contain an inheritance or estate signal" },
+  property_violation: { points: 20, reason: "Notes mention a property violation" },
+  tax_lien: { points: 18, reason: "Notes mention a possible tax lien" },
+  vacancy: { points: 14, reason: "Notes contain a vacancy signal" },
+  absentee_owner: { points: 12, reason: "Notes contain an absentee-owner signal" },
+  expired_listing: { points: 18, reason: "Notes mention an expired listing" },
+  landlord_fatigue: { points: 14, reason: "Notes contain a landlord-fatigue signal" },
+  permit_or_repair_issue: { points: 10, reason: "Notes mention a permit or repair issue" },
+};
+
+function rankLead(lead: LeadRecord, extraction: LeadExtraction, now: Date): RankedLead {
   let score = 0;
   const reasons: string[] = [];
-  const evidence: string[] = [];
-  const normalizedNotes = lead.notes.toLowerCase();
-  const followUp = parseDate(lead.followUpDate);
+  const evidence: string[] = extraction.evidenceQuotes.map((quote) => `Lead note: "${quote}"`);
+  const followUp = parseDate(extraction.followUpDate);
   const lastContact = parseDate(lead.lastContact);
 
   if (followUp) {
     const daysLate = daysBetween(followUp, now);
     if (daysLate >= 0) {
       score += 50 + Math.min(daysLate, 20);
-      reasons.push(`Follow-up is ${pluralizeDays(daysLate)} overdue`);
-      evidence.push(`Follow-up date in the imported record: ${lead.followUpDate}`);
+      reasons.push(daysLate === 0 ? "Follow-up is due today" : `Follow-up is ${pluralizeDays(daysLate)} overdue`);
     } else if (daysLate >= -7) {
       score += 30;
       reasons.push(`Follow-up is due in ${pluralizeDays(Math.abs(daysLate))}`);
-      evidence.push(`Follow-up date in the imported record: ${lead.followUpDate}`);
     }
+    evidence.push(`Extracted follow-up date: ${extraction.followUpDate}`);
+  } else if (extraction.followUpRequested) {
+    score += 8;
+    reasons.push("Follow-up was requested, but the timing needs review");
   }
 
-  const signals: Array<{ terms: string[]; points: number; reason: string }> = [
-    {
-      terms: ["inherited", "inheritance", "probate", "estate"],
-      points: 28,
-      reason: "Notes contain an inheritance or estate signal",
-    },
-    {
-      terms: ["violation", "code issue", "dob"],
-      points: 20,
-      reason: "Notes mention a property violation",
-    },
-    {
-      terms: ["call me", "call back", "follow up", "reach out"],
-      points: 18,
-      reason: "The owner requested or invited follow-up",
-    },
-    {
-      terms: ["sell", "selling", "listing", "offer"],
-      points: 16,
-      reason: "Notes contain a possible selling signal",
-    },
-    {
-      terms: ["vacant", "absentee", "out of state"],
-      points: 12,
-      reason: "Notes contain a vacancy or absentee-owner signal",
-    },
-  ];
-
-  signals.forEach((signal) => {
-    if (signal.terms.some((term) => normalizedNotes.includes(term))) {
-      score += signal.points;
-      reasons.push(signal.reason);
-    }
+  extraction.propertySignals.forEach((signal) => {
+    const definition = signalDefinitions[signal];
+    if (!definition) return;
+    score += definition.points;
+    reasons.push(definition.reason);
   });
+
+  if (extraction.followUpRequested) score += 18;
+  if (extraction.motivation === "possible_sale") {
+    score += 16;
+    reasons.push("Notes contain a possible selling signal");
+  } else if (extraction.motivation === "not_selling") {
+    score -= 45;
+    reasons.push("Notes say the owner is not currently selling");
+  }
 
   if (lastContact) {
     const quietDays = Math.max(0, daysBetween(lastContact, now));
@@ -219,41 +214,61 @@ function rankLead(lead: LeadRecord, now: Date): RankedLead {
       score += 12;
       reasons.push(`Last contact was ${pluralizeDays(quietDays)} ago`);
     }
-    evidence.push(`Last contact in the imported record: ${lead.lastContact}`);
+    evidence.push(`Imported last contact: ${lead.lastContact}`);
   }
 
-  evidence.unshift(`Lead note: “${lead.notes.slice(0, 180)}${lead.notes.length > 180 ? "…" : "”"}`);
+  if (extraction.confidence === "low") score -= 8;
 
-  const hasOverdueFollowUp = followUp && daysBetween(followUp, now) >= 0;
-  const recommendedAction = hasOverdueFollowUp
+  const recommendedAction = extraction.recommendedAction === "call"
     ? `Call ${lead.ownerName} today and reference the documented follow-up.`
-    : `Review the note, then contact ${lead.ownerName} with a property-specific check-in.`;
+    : extraction.recommendedAction === "wait"
+      ? `Keep ${lead.ownerName} in the workspace without initiating outreach.`
+      : `Review the evidence for ${lead.ownerName} before deciding whether to contact them.`;
 
   return {
     score,
     address: lead.address,
     ownerName: lead.ownerName,
     headline: reasons[0] ?? "Review this property lead",
+    summary: extraction.summary,
     reasons: reasons.slice(0, 3),
     evidence: evidence.slice(0, 3),
     recommendedAction,
     lastContact: lead.lastContact || null,
-    followUpDate: lead.followUpDate || null,
+    followUpDate: extraction.followUpDate,
+    confidence: extraction.confidence,
   };
 }
 
-export function generateBriefing(
-  csvText: string,
+export function generateBriefingFromLeads(
+  leads: LeadRecord[],
+  extractions: LeadExtraction[],
+  rejectedRows: RejectedRow[],
+  metrics: ExtractionMetrics,
   now = new Date(),
 ): BriefingResult {
-  const { leads, rejectedRows } = parseLeadCsv(csvText);
-  const priorities = leads
-    .map((lead) => rankLead(lead, now))
+  const extractionByRow = new Map(extractions.map((extraction) => [extraction.rowNumber, extraction]));
+  const allowed = leads
+    .map((lead) => ({ lead, extraction: extractionByRow.get(lead.rowNumber) }))
+    .filter((item): item is { lead: LeadRecord; extraction: LeadExtraction } => Boolean(item.extraction));
+
+  const priorities = allowed
+    .filter(({ extraction }) => !extraction.doNotContact)
+    .map(({ lead, extraction }) => rankLead(lead, extraction, now))
     .sort((a, b) => b.score - a.score || a.address.localeCompare(b.address))
     .slice(0, 3)
-    .map(({ score: _score, ...priority }, index) => ({
-      ...priority,
+    .map((item, index): BriefingPriority => ({
       rank: index + 1,
+      address: item.address,
+      ownerName: item.ownerName,
+      headline: item.headline,
+      summary: item.summary,
+      reasons: item.reasons,
+      evidence: item.evidence,
+      recommendedAction: item.recommendedAction,
+      lastContact: item.lastContact,
+      followUpDate: item.followUpDate,
+      confidence: item.confidence,
     }));
 
   return {
@@ -261,5 +276,14 @@ export function generateBriefing(
     rejectedRows,
     generatedAt: now.toISOString(),
     priorities,
+    metrics,
+    manualReviewCount: allowed.filter(({ extraction }) => extraction.confidence === "low" || extraction.recommendedAction === "review").length,
+    doNotContactCount: allowed.filter(({ extraction }) => extraction.doNotContact).length,
   };
+}
+
+export function generateBriefing(csvText: string, now = new Date()): BriefingResult {
+  const { leads, rejectedRows } = parseLeadCsv(csvText);
+  const extraction = extractLocally(leads, now);
+  return generateBriefingFromLeads(leads, extraction.extractions, rejectedRows, extraction.metrics, now);
 }

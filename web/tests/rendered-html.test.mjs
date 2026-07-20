@@ -13,15 +13,16 @@ async function render() {
   );
 }
 
-test("server-renders the Property OS briefing interface", async () => {
+test("server-renders the Property OS workspace", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>Property OS \| Morning Briefing<\/title>/i);
-  assert.match(html, /Turn forgotten follow-ups into today/);
-  assert.match(html, /Generate morning briefing/);
-  assert.match(html, /Your top three properties/);
+  assert.match(html, /<title>Property OS \| Property Intelligence Workspace<\/title>/i);
+  assert.match(html, /Good morning, Mitra/);
+  assert.match(html, /Who to call first/);
+  assert.match(html, /Map Intelligence/);
+  assert.match(html, /No outreach is automated/);
   assert.doesNotMatch(html, /codex-preview|SkeletonPreview|react-loading-skeleton/);
 });

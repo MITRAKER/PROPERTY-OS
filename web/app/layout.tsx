@@ -21,18 +21,18 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase: new URL(origin),
-    title: "Property OS | Morning Briefing",
-    description: "Turn a property lead list into an evidence-backed daily call plan.",
+    title: "Property OS | Property Intelligence Workspace",
+    description: "Know which property needs you next with an evidence-backed daily briefing, property workspace, and neighborhood intelligence.",
     openGraph: {
-      title: "Property OS | Morning Briefing",
-      description: "Your evidence-backed top three properties to contact today.",
-      images: [{ url: `${origin}/og.png`, width: 1536, height: 1024 }],
+      title: "Property OS | Property Intelligence Workspace",
+      description: "Your evidence-backed command center for property relationships and next actions.",
+      images: [{ url: `${origin}/og-property-os.png`, width: 1536, height: 1024 }],
     },
     twitter: {
       card: "summary_large_image",
-      title: "Property OS | Morning Briefing",
-      description: "Your evidence-backed top three properties to contact today.",
-      images: [`${origin}/og.png`],
+      title: "Property OS | Property Intelligence Workspace",
+      description: "Your evidence-backed command center for property relationships and next actions.",
+      images: [`${origin}/og-property-os.png`],
     },
   };
 }

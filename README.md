@@ -2,6 +2,12 @@
 
 Property OS is a property-centered workflow tool for real-estate professionals. The first MVP feature turns a CSV lead list into an evidence-backed morning briefing showing the three properties an agent should contact first.
 
+## Project memory
+
+The complete product vision, problem definition, MVP decisions, current architecture, four-agent plan, safety rules, implementation status, and roadmap are preserved in [`docs/PROJECT_MEMORY.md`](docs/PROJECT_MEMORY.md). Future contributors and coding agents should read it before making changes.
+
+The detailed orchestration design is in [`REAL_ESTATE_AGENT_ORCHESTRATION.md`](REAL_ESTATE_AGENT_ORCHESTRATION.md).
+
 ## Team members
 
 - Mitra Kermanian
@@ -9,6 +15,8 @@ Property OS is a property-centered workflow tool for real-estate professionals. 
 ## First P0 feature
 
 Upload a CSV containing property leads and receive a ranked **Top 3 properties to contact today** briefing. Every recommendation includes the property, owner, reason for prioritization, source evidence, confidence, and recommended next action. Do-not-contact records are excluded before ranking, and no outreach is sent automatically.
+
+The current `Frontend` branch also demonstrates the wider Property OS experience: Morning Briefing, Properties, Property Workspace, Map Intelligence, and Tasks. Most workspace records and map signals are explicitly demo data; the CSV-to-priority workflow is the real tested P0 path.
 
 ## Run locally
 

@@ -1,8 +1,9 @@
 # Property OS web app
 
-This folder contains the runnable Morning Briefing MVP.
+This folder contains the runnable Property OS MVP and its broader product demonstration.
 
-- `app/page.tsx` provides CSV upload, run metrics, confidence labels, and browser audio controls.
+- `app/page.tsx` provides Morning Briefing, Properties, Property Workspace, Map Intelligence, Tasks, CSV upload, and browser audio controls.
+- `lib/demo-data.ts` contains clearly demo-labeled workspace data used to show the wider product direction.
 - `app/api/briefing/route.ts` keeps the Anthropic key server-side and falls back safely if Claude is unavailable.
 - `lib/extraction.ts` extracts structured note fields with Claude Haiku 4.5 and enforces deterministic safeguards.
 - `lib/briefing.ts` validates, ranks, and explains the property recommendations.
@@ -20,3 +21,5 @@ npm run dev
 Add the class Anthropic key to `.env.local`. Without it, the application remains demonstrable and clearly labels the run as `Local extraction fallback`.
 
 Run the complete verification suite with `npm test`.
+
+Read [`../docs/PROJECT_MEMORY.md`](../docs/PROJECT_MEMORY.md) before making material product or architecture changes.

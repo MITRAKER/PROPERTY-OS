@@ -1,3 +1,6 @@
+import Anthropic from "@anthropic-ai/sdk";
+import type { AnthropicClientLike } from "./extraction.ts";
+
 export type Channel = "email" | "phone" | "text" | "letter";
 
 export type PropertyContext = {
@@ -204,23 +207,137 @@ export function draftMessage(
   }
 }
 
+function blockedResult(request: OutreachRequest, warnings: string[]): OutreachResult {
+  return {
+    propertyId: request.propertyId,
+    channel: request.channel,
+    allowed: false,
+    approvalRequired: false,
+    subject: null,
+    message: null,
+    complianceWarnings: warnings,
+    evidenceUsed: [],
+  };
+}
+
 export function prepareOutreach(request: OutreachRequest): OutreachResult {
   const compliance = checkCompliance(request);
-
-  if (!compliance.allowed) {
-    return {
-      propertyId: request.propertyId,
-      channel: request.channel,
-      allowed: false,
-      approvalRequired: false,
-      subject: null,
-      message: null,
-      complianceWarnings: compliance.warnings,
-      evidenceUsed: [],
-    };
-  }
+  if (!compliance.allowed) return blockedResult(request, compliance.warnings);
 
   const draft = draftMessage(request.channel, request.propertyContext, request.relationshipContext);
+
+  return {
+    propertyId: request.propertyId,
+    channel: request.channel,
+    allowed: true,
+    approvalRequired: compliance.approvalRequired,
+    subject: draft.subject,
+    message: draft.message,
+    complianceWarnings: compliance.warnings,
+    evidenceUsed: draft.evidenceUsed,
+  };
+}
+
+type Fact = { id: string; text: string };
+
+// Claude cites facts by id rather than free-typing evidence text, so evidenceUsed can only ever
+// be built from strings we supplied — the model can personalize prose but can't invent evidence.
+function collectFacts(propertyContext: PropertyContext, relationshipContext: RelationshipContext): Fact[] {
+  const facts: Fact[] = [];
+
+  if (relationshipContext.lastConversation) {
+    facts.push({ id: "relationship-last-conversation", text: relationshipContext.lastConversation });
+  }
+  (relationshipContext.notes ?? []).forEach((note, index) => {
+    facts.push({ id: `relationship-note-${index}`, text: note });
+  });
+  (propertyContext.facts ?? []).forEach((fact, index) => {
+    facts.push({ id: `property-fact-${index}`, text: fact });
+  });
+
+  return facts;
+}
+
+const DRAFT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    subject: { type: ["string", "null"] },
+    message: { type: "string" },
+    usedFactIds: { type: "array", items: { type: "string" } },
+  },
+  required: ["subject", "message", "usedFactIds"],
+} as const;
+
+function draftPrompt(channel: Channel, propertyContext: PropertyContext, facts: Fact[]) {
+  return `Draft a ${channel} outreach ${channel === "phone" ? "call script" : "message"} to ${propertyContext.ownerName} about ${propertyContext.address}.
+
+Rules:
+- Use only the facts listed below. Do not invent names, dates, numbers, or claims not present in this list.
+- If the list is empty, keep the message generic and do not fabricate history.
+- Never use age, race, religion, disability, familial status, sex, national origin, or another protected trait.
+- Keep the tone professional and warm. For "phone", write it as a short script with an opening line and a closing question.
+- Set usedFactIds to only the ids of facts you actually referenced.
+- Set subject for channel "email" only; for every other channel, subject must be null.
+
+Available facts:
+${JSON.stringify(facts)}`;
+}
+
+async function callDraftClaude(client: AnthropicClientLike, model: string, channel: Channel, propertyContext: PropertyContext, facts: Fact[]) {
+  const response = await client.messages.create({
+    model,
+    max_tokens: 1_000,
+    temperature: 0,
+    system: "You draft auditable real-estate outreach messages. Return only the requested structured output.",
+    messages: [{ role: "user", content: draftPrompt(channel, propertyContext, facts) }],
+    output_config: {
+      format: {
+        type: "json_schema",
+        schema: DRAFT_SCHEMA,
+      },
+    },
+  });
+  const text = response.content.find((block) => block.type === "text")?.text;
+  if (!text) throw new Error("Claude returned no structured draft content.");
+  return JSON.parse(text) as { subject?: unknown; message?: unknown; usedFactIds?: unknown };
+}
+
+function validateDraft(
+  candidate: { subject?: unknown; message?: unknown; usedFactIds?: unknown },
+  facts: Fact[],
+  channel: Channel,
+  local: { subject: string | null; message: string; evidenceUsed: string[] },
+): { subject: string | null; message: string; evidenceUsed: string[] } {
+  const message = typeof candidate.message === "string" && candidate.message.trim() ? candidate.message.trim() : null;
+  if (!message) return local;
+
+  const subject = channel === "email"
+    ? (typeof candidate.subject === "string" && candidate.subject.trim() ? candidate.subject.trim() : local.subject)
+    : null;
+
+  const factById = new Map(facts.map((fact) => [fact.id, fact.text]));
+  const usedFactIds = Array.isArray(candidate.usedFactIds)
+    ? candidate.usedFactIds.filter((id): id is string => typeof id === "string" && factById.has(id))
+    : [];
+  const evidenceUsed = usedFactIds.map((id) => `Fact on file: "${factById.get(id)}"`);
+
+  return { subject, message, evidenceUsed };
+}
+
+export async function prepareOutreachWithAnthropic(
+  request: OutreachRequest,
+  options: { apiKey: string; model?: string; client?: AnthropicClientLike },
+): Promise<OutreachResult> {
+  const compliance = checkCompliance(request);
+  if (!compliance.allowed) return blockedResult(request, compliance.warnings);
+
+  const model = options.model ?? "claude-haiku-4-5";
+  const client = options.client ?? (new Anthropic({ apiKey: options.apiKey }) as unknown as AnthropicClientLike);
+  const local = draftMessage(request.channel, request.propertyContext, request.relationshipContext);
+  const facts = collectFacts(request.propertyContext, request.relationshipContext);
+  const candidate = await callDraftClaude(client, model, request.channel, request.propertyContext, facts);
+  const draft = validateDraft(candidate, facts, request.channel, local);
 
   return {
     propertyId: request.propertyId,

@@ -1,4 +1,4 @@
-import { prepareOutreach } from "../../../lib/outreach.ts";
+import { prepareOutreach, prepareOutreachWithAnthropic } from "../../../lib/outreach.ts";
 import type { Channel, OutreachRequest } from "../../../lib/outreach.ts";
 
 const CHANNELS: Channel[] = ["email", "phone", "text", "letter"];
@@ -30,6 +30,21 @@ export async function POST(request: Request) {
         { error: "Provide propertyId, channel, propertyContext.address/ownerName, relationshipContext, and permissions.doNotContact." },
         { status: 400 },
       );
+    }
+
+    const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
+    if (apiKey) {
+      try {
+        return Response.json(
+          await prepareOutreachWithAnthropic(body, {
+            apiKey,
+            model: process.env.ANTHROPIC_MODEL || "claude-haiku-4-5",
+          }),
+        );
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "Unknown provider error";
+        console.error("Claude drafting failed; using local fallback:", detail);
+      }
     }
 
     return Response.json(prepareOutreach(body));

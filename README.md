@@ -5,6 +5,9 @@ Property OS is a property-centered workflow tool for real-estate professionals. 
 ## Team members
 
 - Mitra Kermanian
+- Mofazzal Hossain
+- Juan
+- Eric
 
 ## First P0 feature
 

@@ -24,9 +24,19 @@ export type PropertyRecord = {
   signals: string[];
   timeline: PropertyTimelineEvent[];
   mapClass: string;
+  // Real geographic + public-record fields (populated by NYC enrichment; the
+  // seeded demo properties carry approximate neighborhood coordinates).
+  latitude?: number | null;
+  longitude?: number | null;
+  bbl?: string | null;
+  bin?: string | null;
+  assessedValue?: number | null;
+  yearBuilt?: number | null;
+  ownerMailingAddress?: string | null;
+  enriched?: boolean;
 };
 
-export type DemoTask = {
+export type TaskRecord = {
   id: string;
   title: string;
   address: string;
@@ -36,9 +46,11 @@ export type DemoTask = {
   completed: boolean;
 };
 
-export const demoProperties: PropertyRecord[] = [
+export const sampleProperties: PropertyRecord[] = [
   {
     id: "prop-001",
+    latitude: 40.702,
+    longitude: -73.798,
     address: "88 Linden Avenue",
     neighborhood: "Jamaica, Queens",
     ownerName: "Elena Ruiz",
@@ -61,6 +73,8 @@ export const demoProperties: PropertyRecord[] = [
   },
   {
     id: "prop-002",
+    latitude: 40.665,
+    longitude: -73.735,
     address: "123 Main Street",
     neighborhood: "Rosedale, Queens",
     ownerName: "Sara Patel",
@@ -83,6 +97,8 @@ export const demoProperties: PropertyRecord[] = [
   },
   {
     id: "prop-003",
+    latitude: 40.762,
+    longitude: -73.771,
     address: "41-09 Bell Boulevard",
     neighborhood: "Bayside, Queens",
     ownerName: "Chloe Martin",
@@ -105,6 +121,8 @@ export const demoProperties: PropertyRecord[] = [
   },
   {
     id: "prop-004",
+    latitude: 40.692,
+    longitude: -73.76,
     address: "45 Farmers Boulevard",
     neighborhood: "St. Albans, Queens",
     ownerName: "David Chen",
@@ -127,6 +145,8 @@ export const demoProperties: PropertyRecord[] = [
   },
   {
     id: "prop-005",
+    latitude: 40.593,
+    longitude: -73.774,
     address: "302 Beach 44th Street",
     neighborhood: "Edgemere, Queens",
     ownerName: "Nadia Williams",
@@ -148,6 +168,8 @@ export const demoProperties: PropertyRecord[] = [
   },
   {
     id: "prop-006",
+    latitude: 40.688,
+    longitude: -73.786,
     address: "155-20 111th Avenue",
     neighborhood: "South Jamaica, Queens",
     ownerName: "Maria Santos",
@@ -169,6 +191,8 @@ export const demoProperties: PropertyRecord[] = [
   },
   {
     id: "prop-007",
+    latitude: 40.657,
+    longitude: -73.73,
     address: "144-30 243rd Street",
     neighborhood: "Rosedale, Queens",
     ownerName: "Grace Lee",
@@ -190,6 +214,8 @@ export const demoProperties: PropertyRecord[] = [
   },
   {
     id: "prop-008",
+    latitude: 40.7,
+    longitude: -73.792,
     address: "61 Guy R Brewer Boulevard",
     neighborhood: "Jamaica, Queens",
     ownerName: "Robert King",
@@ -211,7 +237,7 @@ export const demoProperties: PropertyRecord[] = [
   },
 ];
 
-export const initialTasks: DemoTask[] = [
+export const sampleTasks: TaskRecord[] = [
   { id: "task-1", title: "Call Elena about probate follow-up", address: "88 Linden Avenue", due: "Today", time: "9:30 AM", priority: "high", completed: false },
   { id: "task-2", title: "Call Chloe about offer interest", address: "41-09 Bell Boulevard", due: "Today", time: "10:15 AM", priority: "high", completed: false },
   { id: "task-3", title: "Prepare violation options for David", address: "45 Farmers Boulevard", due: "Today", time: "1:00 PM", priority: "medium", completed: false },
@@ -219,7 +245,7 @@ export const initialTasks: DemoTask[] = [
   { id: "task-5", title: "Verify absentee-owner mailing address", address: "61 Guy R Brewer Boulevard", due: "Jul 23", time: "2:30 PM", priority: "low", completed: false },
 ];
 
-export const neighborhoodStats = {
+export const sampleNeighborhoodStats = {
   name: "Rosedale",
   inherited: 8,
   liens: 3,

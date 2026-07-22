@@ -83,6 +83,19 @@ Example structured output:
 }
 ```
 
+### Data ingestion is separate from the agent (implemented)
+
+The Property Intelligence Agent never retrieves data itself. A **data provider** turns an address (or property id) into a normalized `PropertyContext`, and the agent only analyzes that context. This lets the data source be replaced without rewriting the agent:
+
+```text
+address  →  PropertyDataProvider  →  normalized PropertyContext  →  Property Intelligence Agent  →  evidence-backed signals
+```
+
+- Default provider: demo/CRM records (`web/lib/data/demo-provider.ts`).
+- Live provider: NYC Open Data — GeoSearch → BBL/BIN, PLUTO → facts, HPD → violations, DOB → permits, ACRIS → deeds/mortgages/transfers (legals → master), all in `web/lib/data/nyc-provider.ts`. Every fact carries a source and retrieval time.
+- Endpoint: `GET /api/property/lookup?address=...&source=demo|nyc`.
+- Boundary: public records never provide phone, email, contact permission, or verified sale intent; those come only from the CRM or authorized integrations and are returned as `missingInformation`. Agents call official APIs through this layer only — never scrape arbitrary sites.
+
 The agent can interpret evidence, but application code should calculate the final opportunity score using transparent rules.
 
 Example scoring rules:

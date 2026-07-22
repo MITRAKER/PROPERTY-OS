@@ -20,9 +20,12 @@ test("server-renders the Property OS workspace", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>Property OS \| Property Intelligence Workspace<\/title>/i);
-  assert.match(html, /Good morning, Mitra/);
+  assert.match(html, /Good morning/);
   assert.match(html, /Who to call first/);
-  assert.match(html, /Map Intelligence/);
-  assert.match(html, /No outreach is automated/);
+  assert.match(html, /Nothing sends without your OK/);
   assert.doesNotMatch(html, /codex-preview|SkeletonPreview|react-loading-skeleton/);
+  // No demo/sample content should ever be baked into the shipped HTML.
+  assert.doesNotMatch(html, /demoProperties|Use demo file|Mitra K\./);
+  // Non-technical audience: keep engineer jargon out of the visible UI copy.
+  assert.doesNotMatch(html, /Model runs|Agent activity|four coordinated agents/i);
 });

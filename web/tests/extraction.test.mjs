@@ -5,8 +5,8 @@ import { parseLeadCsv } from "../lib/briefing.ts";
 import { estimateClaudeCost, extractLeadsWithAnthropic, extractLocally } from "../lib/extraction.ts";
 
 const fixedNow = new Date("2026-07-20T12:00:00.000Z");
-const csv = await readFile(new URL("../public/messy-leads.csv", import.meta.url), "utf8");
-const expected = JSON.parse(await readFile(new URL("../data/messy-leads-expected.json", import.meta.url), "utf8"));
+const csv = await readFile(new URL("./fixtures/messy-leads.csv", import.meta.url), "utf8");
+const expected = JSON.parse(await readFile(new URL("./fixtures/messy-leads-expected.json", import.meta.url), "utf8"));
 const { leads } = parseLeadCsv(csv);
 
 test("the messy-note benchmark contains 20 usable property records", () => {

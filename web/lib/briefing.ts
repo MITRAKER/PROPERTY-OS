@@ -1,5 +1,6 @@
 import { extractLocally } from "./extraction.ts";
 import type { Confidence, ExtractionMetrics, LeadExtraction } from "./extraction.ts";
+import type { PropertyRecord, PropertyStatus } from "./property-model.ts";
 
 export type LeadRecord = {
   address: string;
@@ -286,4 +287,89 @@ export function generateBriefing(csvText: string, now = new Date()): BriefingRes
   const { leads, rejectedRows } = parseLeadCsv(csvText);
   const extraction = extractLocally(leads, now);
   return generateBriefingFromLeads(leads, extraction.extractions, rejectedRows, extraction.metrics, now);
+}
+
+// An imported lead becomes a real property workspace. `doNotContact` rides along
+// so the deterministic permission layer can be persisted with the property.
+export type ImportedPropertyRecord = PropertyRecord & { doNotContact: boolean };
+
+const SIGNAL_LABELS: Record<string, string> = {
+  inheritance_or_estate: "Inherited / estate",
+  property_violation: "Violation",
+  tax_lien: "Tax lien",
+  vacancy: "Vacant",
+  absentee_owner: "Absentee owner",
+  expired_listing: "Expired listing",
+  landlord_fatigue: "Landlord fatigue",
+  permit_or_repair_issue: "Permit / repair",
+};
+
+const MAP_CLASSES = ["parcel-a", "parcel-b", "parcel-c", "parcel-d", "parcel-e", "parcel-f", "parcel-g", "parcel-h"];
+
+function slugifyAddress(address: string) {
+  return address.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+}
+
+function importScore(extraction: LeadExtraction): number {
+  if (extraction.doNotContact) return 28;
+  if (extraction.recommendedAction === "call") return extraction.confidence === "high" ? 92 : 84;
+  if (extraction.motivation === "possible_sale") return 78;
+  if (extraction.recommendedAction === "wait") return 52;
+  return 62;
+}
+
+function importStatus(extraction: LeadExtraction): { status: PropertyStatus; statusLabel: string } {
+  if (extraction.doNotContact) return { status: "review", statusLabel: "Do not contact" };
+  if (extraction.propertySignals.includes("inheritance_or_estate")) return { status: "inherited", statusLabel: "Inherited" };
+  if (extraction.propertySignals.includes("property_violation")) return { status: "violation", statusLabel: "Violation" };
+  if (extraction.recommendedAction === "call") return { status: "urgent", statusLabel: "Call today" };
+  if (extraction.motivation === "possible_sale") return { status: "warm", statusLabel: "Warm lead" };
+  return { status: "review", statusLabel: "Needs review" };
+}
+
+function importNextAction(lead: LeadRecord, extraction: LeadExtraction): string {
+  if (extraction.doNotContact) return `Do not contact ${lead.ownerName}. Keep the record for compliance only.`;
+  if (extraction.recommendedAction === "call") return `Call ${lead.ownerName} and reference the documented follow-up.`;
+  if (extraction.recommendedAction === "wait") return `Hold ${lead.ownerName} in the workspace; no outreach yet.`;
+  return `Review the evidence for ${lead.ownerName} before contacting them.`;
+}
+
+export function buildImportedProperties(
+  leads: LeadRecord[],
+  extractions: LeadExtraction[],
+  now = new Date(),
+): ImportedPropertyRecord[] {
+  const byRow = new Map(extractions.map((extraction) => [extraction.rowNumber, extraction]));
+  return leads.map((lead, index) => {
+    const extraction = byRow.get(lead.rowNumber);
+    const signals = (extraction?.propertySignals ?? []).map((signal) => SIGNAL_LABELS[signal] ?? signal);
+    if (extraction?.motivation === "possible_sale") signals.push("Possible sale");
+    const status = extraction ? importStatus(extraction) : { status: "review" as PropertyStatus, statusLabel: "Needs review" };
+    return {
+      id: `import-${slugifyAddress(lead.address)}`,
+      address: lead.address,
+      neighborhood: "Imported lead",
+      ownerName: lead.ownerName,
+      status: status.status,
+      statusLabel: status.statusLabel,
+      score: extraction ? importScore(extraction) : 50,
+      equity: "Unknown",
+      ownershipYears: 0,
+      lastContact: lead.lastContact || "",
+      followUpDate: extraction?.followUpDate ?? null,
+      nextAction: extraction ? importNextAction(lead, extraction) : `Review ${lead.ownerName}.`,
+      summary: extraction?.summary ?? lead.notes.slice(0, 180),
+      signals: signals.length ? Array.from(new Set(signals)) : ["Imported lead"],
+      mapClass: MAP_CLASSES[index % MAP_CLASSES.length],
+      timeline: [
+        {
+          date: now.toISOString().slice(0, 10),
+          title: "Imported from CSV",
+          detail: `Follow-Up Agent analyzed the note. Recommended action: ${extraction?.recommendedAction ?? "review"}.`,
+          type: "note" as const,
+        },
+      ],
+      doNotContact: extraction?.doNotContact ?? false,
+    };
+  });
 }

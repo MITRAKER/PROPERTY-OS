@@ -18,8 +18,10 @@ const localBindingConfig = {
     ? [
         {
           binding: d1,
-          database_name: "site-creator-d1",
-          database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
+          // Real values for a deploy come from the environment; local dev and CI
+          // fall back to the placeholder so nothing external is required to build.
+          database_name: process.env.D1_DATABASE_NAME || "site-creator-d1",
+          database_id: process.env.D1_DATABASE_ID || SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
         },
       ]
     : [],

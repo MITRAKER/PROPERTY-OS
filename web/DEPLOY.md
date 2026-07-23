@@ -9,6 +9,9 @@ The result is a public URL like
 
 Everything below is free-tier. Run it from the `web/` folder.
 
+> All commands run from the **`web/`** folder (the `build` script lives here, not
+> in the project root). `cd web` first.
+
 ## One-time setup
 
 1. **Sign in to Cloudflare** (opens a browser to authorize):
@@ -20,27 +23,33 @@ Everything below is free-tier. Run it from the `web/` folder.
    ```
    npx wrangler d1 create property-os
    ```
+   Ignore the `"d1_databases"` binding snippet wrangler suggests — you don't edit
+   any config. The app's binding is already `DB`; you only need the `database_id`.
 
 ## Build + deploy
 
-3. **Point the build at your database**, then build. Use whichever shell you have:
+3. **Point the build at your database**, then build (from `web/`):
 
    PowerShell:
    ```powershell
+   cd web
    $env:D1_DATABASE_NAME = "property-os"
    $env:D1_DATABASE_ID   = "<the id from step 2>"
    npm run build
    ```
    bash:
    ```bash
+   cd web
    D1_DATABASE_NAME=property-os D1_DATABASE_ID=<the id from step 2> npm run build
    ```
 
-4. **Deploy** the generated Worker (it reads `dist/server/wrangler.json`):
+4. **Deploy from `web/`** (NOT from `dist/server`). The build wrote
+   `.wrangler/deploy/config.json`, which points wrangler at the built worker, so
+   this one command is all you need:
    ```
-   cd dist/server
    npx wrangler deploy
    ```
+   Running it inside `dist/server` makes wrangler find two configs and error out.
    Wrangler prints your live URL. Open it — the database tables are created
    automatically on the first request, and the app starts on an empty workspace.
 

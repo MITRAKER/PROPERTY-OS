@@ -450,3 +450,32 @@ Before implementing the next feature:
 4. State whether the requested feature is demo-only or production-backed.
 5. Keep source provenance and human approval visible in the UI.
 6. Update this memory if the work changes scope, stack, architecture, or product truth.
+
+## 18. Recent updates (deploy, compliance, contact data, UI)
+
+- **Deployed live** on Cloudflare Workers + D1 at
+  https://property-os-morning-briefing.property-os.workers.dev. The build sources
+  the D1 database id/name from env (`D1_DATABASE_ID` / `D1_DATABASE_NAME`) so
+  `vinext build` emits a deploy-ready `dist/server/wrangler.json`; deploy from
+  `web/` (the plugin writes `.wrangler/deploy/config.json`). See `web/DEPLOY.md`.
+  Runs as the auto "Local Developer" workspace (Google OAuth left off).
+- **Command-center home dashboard:** the briefing view surfaces every module at
+  once — priority queue, neighborhood pulse, reminders, messages (approvals),
+  people (owners), an embedded live map, and recent activity — rather than hiding
+  them behind nav tabs. UI is a warm "amber glass" theme tuned for WCAG AA text
+  contrast (min ~8.7:1).
+- **Contact data (skip tracing) implemented:** vendor-agnostic
+  `ContactDataProvider` is now real — a generic HTTP adapter that deep-scans any
+  JSON response, plus a BatchData preset, configured entirely by env.
+  `/api/contacts/lookup` goes live the moment a vendor key is set and degrades
+  honestly to the CSV path otherwise.
+- **Send-time compliance controls:** cold SMS off by default
+  (`DEFAULT_PERMISSION.textAllowed=false`), 8am–9pm quiet hours for calls/texts,
+  a workspace-wide do-not-contact suppression list (`suppressions` table +
+  `/api/suppressions`), and a CAN-SPAM email footer. Deterministic, enforced in
+  the send-time gate (`web/app/api/approvals/decide/route.ts`).
+- **Legal posture:** a compliance review (TCPA/DNC/CAN-SPAM/FCRA/NY) was run; the
+  controls above are built, but real-outreach go-live still gates on a signed
+  vendor data contract, National DNC registration, and an attorney consult —
+  which a local/demo build does not need.
+- **Test count:** 64 unit tests + production build + server-render, all green.

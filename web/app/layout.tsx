@@ -23,6 +23,9 @@ export async function generateMetadata(): Promise<Metadata> {
     metadataBase: new URL(origin),
     title: "Property OS | Property Intelligence Workspace",
     description: "Know which property needs you next with an evidence-backed daily briefing, property workspace, and neighborhood intelligence.",
+    applicationName: "Property OS",
+    alternates: { canonical: "/" },
+    robots: { index: true, follow: true },
     openGraph: {
       title: "Property OS | Property Intelligence Workspace",
       description: "Your evidence-backed command center for property relationships and next actions.",

@@ -818,12 +818,12 @@ h1, h2, h3, p { margin-top: 0; }
    below handle the shell, panels, the map, and text contrast on glass.
    ============================================================================ */
 :root {
-  --ink: #f6ecdd;
-  --ink-soft: #c6b39c;
-  --line: rgba(255, 226, 190, 0.14);
-  --line-strong: rgba(255, 226, 190, 0.26);
-  --paper: rgba(64, 47, 33, 0.46);
-  --cream: rgba(255, 238, 216, 0.09);
+  --ink: #f8efe2;
+  --ink-soft: #d7c8b1;          /* brighter muted text for legibility on glass */
+  --line: rgba(255, 226, 190, 0.16);
+  --line-strong: rgba(255, 226, 190, 0.28);
+  --paper: rgba(43, 31, 21, 0.86);   /* opaque enough that the glow can't wash text */
+  --cream: rgba(255, 238, 216, 0.10);
   --forest: #e8843c;          /* warm orange — primary actions + active nav */
   --forest-deep: #cf6f2b;
   --mint: #f0b45f;            /* warm gold — links + highlights */
@@ -843,11 +843,11 @@ body::before {
   inset: 0;
   z-index: -1;
   background:
-    radial-gradient(820px 620px at 84% 24%, rgba(255, 200, 132, 0.52), transparent 56%),
-    radial-gradient(1000px 760px at 14% 6%, rgba(156, 96, 52, 0.42), transparent 60%),
-    radial-gradient(1120px 800px at 56% 114%, rgba(234, 142, 66, 0.42), transparent 56%),
-    linear-gradient(158deg, #241610 0%, #35230f 46%, #281a10 100%);
-  background-color: #241710;
+    radial-gradient(760px 560px at 86% 20%, rgba(255, 200, 132, 0.32), transparent 58%),
+    radial-gradient(1000px 760px at 12% 4%, rgba(156, 96, 52, 0.26), transparent 62%),
+    radial-gradient(1120px 800px at 56% 116%, rgba(234, 142, 66, 0.26), transparent 58%),
+    linear-gradient(158deg, #20140d 0%, #2c1d0f 46%, #22160d 100%);
+  background-color: #20140d;
 }
 /* Soft warm vignette adds depth around the glowing centre. */
 body::after {
@@ -866,7 +866,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 /* ---- Shell ------------------------------------------------------------- */
 .app-shell { background: transparent; }
 .sidebar {
-  background: rgba(40, 28, 19, 0.5);
+  background: rgba(32, 22, 14, 0.72);
   backdrop-filter: var(--glass);
   -webkit-backdrop-filter: var(--glass);
   border-right: 1px solid var(--line);
@@ -877,8 +877,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   box-shadow: 0 6px 18px rgba(232, 132, 60, 0.45);
 }
 .brand-copy strong { color: var(--ink); }
-.brand-copy small { color: #b7a48d; }
-.main-nav button { color: #cbb8a1; }
+.brand-copy small { color: #cbb8a0; }
+.main-nav button { color: #d8c7b0; }
 .main-nav button:hover { background: rgba(255, 226, 190, 0.06); color: #f6ecdd; }
 .main-nav button.active {
   background: linear-gradient(150deg, #f2933f, #d9702a);
@@ -886,24 +886,24 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   box-shadow: 0 10px 24px rgba(232, 132, 60, 0.36);
 }
 .main-nav button.active .nav-label em { color: rgba(255, 255, 255, 0.85); }
-.main-nav .nav-label em { color: rgba(255, 226, 190, 0.42); }
+.main-nav .nav-label em { color: rgba(255, 232, 200, 0.62); }
 .main-nav b { background: rgba(255, 226, 190, 0.15); color: #f6ecdd; }
 .main-nav .active b { background: rgba(255, 248, 238, 0.9); color: #cf6f2b; }
 .sidebar-status { border-color: var(--line); }
 .sidebar-status strong, .user-chip strong { color: var(--ink); }
-.sidebar-status small, .user-chip small { color: #b09b83; }
+.sidebar-status small, .user-chip small { color: #c5b096; }
 .status-dot { background: #a6c76a; border-color: rgba(166, 199, 106, 0.26); box-shadow: 0 0 12px rgba(166, 199, 106, 0.5); }
 .user-chip > span { background: rgba(232, 132, 60, 0.2); color: #f0b45f; }
 
 /* ---- Top bar ----------------------------------------------------------- */
 .topbar {
-  background: rgba(40, 28, 19, 0.42);
+  background: rgba(32, 22, 14, 0.68);
   backdrop-filter: var(--glass);
   -webkit-backdrop-filter: var(--glass);
   border-bottom: 1px solid var(--line);
 }
 .topbar-breadcrumb strong { color: var(--ink); }
-.topbar-breadcrumb span { color: #b09b83; }
+.topbar-breadcrumb span { color: #c5b096; }
 .topbar-clock {
   color: #f0e2cf;
   font-family: var(--font-geist-mono), monospace;
@@ -980,11 +980,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .neighborhood-panel,
 .ai-summary-card,
 .import-drawer {
-  background: linear-gradient(158deg, rgba(92, 58, 32, 0.62), rgba(52, 34, 20, 0.72));
+  background: linear-gradient(158deg, rgba(84, 52, 28, 0.9), rgba(44, 28, 17, 0.94));
   backdrop-filter: var(--glass);
   -webkit-backdrop-filter: var(--glass);
-  border: 1px solid rgba(255, 214, 168, 0.18);
-  color: #f7ecdd;
+  border: 1px solid rgba(255, 214, 168, 0.2);
+  color: #f9efe1;
 }
 .opportunity-panel .overline,
 .neighborhood-panel .overline,
@@ -1032,15 +1032,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 ::placeholder { color: #a4907a; }
 
 /* ---- Text contrast fixes (hardcoded greys → warm cream on bronze glass) - */
-.overline { color: #c19a6f; }
+.overline { color: #d7b184; }
 .kpi-grid article > span, .weekly-strip span,
 .priority-address span, .priority-reason span, .task-copy span, .task-time span,
 .property-table-row span, .property-table-header, .contacts-header,
 .fact-card dt, .lookup-facts dt, .prospect-head span,
 .timeline-event p, .timeline-event time, .prospect-foot small,
-.kpi-grid small, .weekly-strip small, .provider-badge, .demo-label { color: #bda88f; }
-.priority-rank { color: #b79a72; }
-.priority-reason strong { color: #ecdcc7; }
+.kpi-grid small, .weekly-strip small, .provider-badge, .demo-label { color: #d0bea3; }
+.priority-rank { color: #c6a985; }
+.priority-reason strong { color: #f0e2cf; }
 .priority-row:hover, .property-table-row:hover, .palette-item:hover { background: rgba(255, 226, 190, 0.06); }
 .property-table-header { background: rgba(255, 226, 190, 0.05); }
 .lookup-facts dd, .fact-card dd, .settings-card dd { color: var(--ink); }
@@ -1083,8 +1083,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   box-shadow: 0 10px 26px rgba(18, 9, 3, 0.4);
 }
 .map-toolbar strong { color: var(--ink); }
-.map-toolbar span { color: #bda88f; }
-.map-legend span { color: #c6b39c; }
+.map-toolbar span { color: #d0bea3; }
+.map-legend span { color: #d3c2a9; }
 .map-marker span {
   border: 2px solid #2c1d12;
   box-shadow: 0 6px 16px rgba(18, 9, 3, 0.5), 0 0 0 6px rgba(232, 132, 60, 0.16);
@@ -1143,6 +1143,22 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .mini-person small { color: var(--ink-soft); font-size: .64rem; text-transform: capitalize; }
 .home-map { margin-top: 14px; }
 .home-map .leaflet-canvas { height: 300px; margin: 0; }
+
+/* Legibility: the amber theme's smallest labels were ~10px — lift them to a
+   comfortable reading size. Text sits on now-opaque glass, so contrast holds. */
+.overline { font-size: .66rem; }
+.kpi-grid article > span, .kpi-grid small,
+.weekly-strip span, .weekly-strip small,
+.priority-address span, .priority-reason span,
+.task-copy span, .task-time span,
+.property-table-row span, .contact-role,
+.fact-card dt, .lookup-facts dt,
+.timeline-event p, .map-legend span, .prospect-head span, .prospect-foot small,
+.mini-person small, .mini-draft,
+.sidebar-status small, .user-chip small, .brand-copy small,
+.saved-views-label, .contacts-header { font-size: .72rem; line-height: 1.42; }
+.main-nav .nav-label em { font-size: .68rem; }
+.priority-rank { font-size: .7rem; }
 
 /* Softer, more generous rounding to echo the reference's big glass tiles. */
 .panel { border-radius: 22px; }

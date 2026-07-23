@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { prepareOutreach } from "../lib/outreach.ts";
+import { prepareOutreach, prepareOutreachWithAnthropic } from "../lib/outreach.ts";
 
 const baseRequest = {
   propertyId: "property-001",
@@ -98,4 +98,79 @@ test("never invents property facts beyond what was provided", () => {
 
   assert.match(result.message, /open HPD violation/);
   assert.ok(result.evidenceUsed.some((item) => item.includes("open HPD violation")));
+});
+
+test("Claude path personalizes the draft and cites only supplied facts", async () => {
+  const calls = [];
+  const client = {
+    messages: {
+      async create(input) {
+        calls.push(input);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                subject: "Reconnecting about 123 Main Street",
+                message: "Hi Mrs. Smith, you asked me to reconnect after June, so I wanted to follow up about 123 Main Street.",
+                usedFactIds: ["relationship-last-conversation"],
+              }),
+            },
+          ],
+        };
+      },
+    },
+  };
+
+  const result = await prepareOutreachWithAnthropic(baseRequest, { apiKey: "test-only", client });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].output_config.format.type, "json_schema");
+  assert.equal(result.allowed, true);
+  assert.equal(result.subject, "Reconnecting about 123 Main Street");
+  assert.match(result.message, /you asked me to reconnect after June/);
+  assert.deepEqual(result.evidenceUsed, ['Fact on file: "Asked us to reconnect after June."']);
+});
+
+test("Claude path never calls the model for a blocked request", async () => {
+  const client = {
+    messages: {
+      async create() {
+        throw new Error("should not be called when compliance blocks the request");
+      },
+    },
+  };
+
+  const result = await prepareOutreachWithAnthropic(
+    { ...baseRequest, permissions: { doNotContact: true } },
+    { apiKey: "test-only", client },
+  );
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.message, null);
+});
+
+test("Claude path discards a fact id the model invented and falls back to the deterministic draft", async () => {
+  const client = {
+    messages: {
+      async create() {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                subject: "Following up",
+                message: "Hi Mrs. Smith, following up.",
+                usedFactIds: ["made-up-fact"],
+              }),
+            },
+          ],
+        };
+      },
+    },
+  };
+
+  const result = await prepareOutreachWithAnthropic(baseRequest, { apiKey: "test-only", client });
+
+  assert.deepEqual(result.evidenceUsed, []);
 });

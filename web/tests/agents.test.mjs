@@ -131,6 +131,119 @@ test("property intelligence agent interprets evidence with the local fallback", 
   assert.ok(results[0].signals.some((signal) => signal.type === "ownership_length"));
 });
 
+test("outreach agent adds a subject only for the email channel (local fallback)", async () => {
+  const emailDraft = await runOutreachAgent({
+    property: { id: probate.id, address: probate.address, ownerName: probate.ownerName, notes: probate.summary },
+    channel: "email",
+    rationale: "long ownership",
+  });
+  assert.equal(emailDraft.result.allowed, true);
+  assert.ok(emailDraft.result.subject?.includes(probate.address));
+
+  const callDraft = await runOutreachAgent({
+    property: { id: probate.id, address: probate.address, ownerName: probate.ownerName, notes: probate.summary },
+    channel: "call",
+    rationale: "long ownership",
+  });
+  assert.equal(callDraft.result.subject, undefined);
+});
+
+test("outreach agent cites only supplied evidence ids, never trusts freeform model text", async () => {
+  const evidenceSignals = [
+    { type: "tax_lien", evidence: "Tax lien recorded 2024-03-01", source: "NYC ACRIS", confidence: "high" },
+  ];
+  const client = {
+    messages: {
+      async create() {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                message: "Hi there — I also heard the owner just won the lottery!",
+                subject: "Following up",
+                usedFactIds: ["evidence-0", "bogus-id"],
+              }),
+            },
+          ],
+          usage: { input_tokens: 10, output_tokens: 10 },
+        };
+      },
+    },
+  };
+
+  const { result } = await runOutreachAgent(
+    {
+      property: { id: probate.id, address: probate.address, ownerName: probate.ownerName, notes: probate.summary },
+      channel: "email",
+      rationale: "long ownership",
+      evidenceSignals,
+    },
+    { client },
+  );
+
+  assert.deepEqual(result.evidenceUsed, ["Tax lien recorded 2024-03-01 (source: NYC ACRIS)"]);
+  assert.ok(!result.evidenceUsed?.some((item) => item.includes("lottery")));
+});
+
+test("blocked outreach never reaches evidence citation or Claude", async () => {
+  const client = {
+    messages: {
+      async create() {
+        throw new Error("should not be called when compliance blocks the request");
+      },
+    },
+  };
+
+  const { result } = await runOutreachAgent(
+    {
+      property: { id: probate.id, address: probate.address, ownerName: probate.ownerName, notes: probate.summary },
+      channel: "call",
+      permission: { ...DEFAULT_PERMISSION, doNotContact: true },
+      rationale: "long ownership",
+      evidenceSignals: [{ type: "tax_lien", evidence: "Tax lien recorded", source: "NYC ACRIS", confidence: "high" }],
+    },
+    { client },
+  );
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.subject, undefined);
+  assert.equal(result.evidenceUsed, undefined);
+});
+
+test("orchestrator plumbs subject/evidenceUsed onto the draft from stored intelligence signals", async () => {
+  const enriched = {
+    ...probate,
+    intelligenceSignals: [{ type: "tax_lien", evidence: "Tax lien recorded 2024-03-01", source: "NYC ACRIS", confidence: "high" }],
+  };
+  const client = {
+    messages: {
+      async create() {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                message: "Hi there, following up about the property.",
+                subject: "Following up",
+                usedFactIds: ["evidence-0"],
+              }),
+            },
+          ],
+          usage: { input_tokens: 10, output_tokens: 10 },
+        };
+      },
+    },
+  };
+  const response = await runOrchestrator(`draft an email for ${enriched.address}`, {
+    properties: [enriched],
+    client,
+  });
+  assert.equal(response.drafts[0].allowed, true);
+  assert.deepEqual(response.drafts[0].evidenceUsed, ["Tax lien recorded 2024-03-01 (source: NYC ACRIS)"]);
+  assert.equal(response.drafts[0].subject, "Following up");
+});
+
 test("follow-up agent adds sentiment on the local path", async () => {
   const leads = [
     { address: "1 Test Street", ownerName: "Test Owner", lastContact: "", followUpDate: "", notes: "inherited home, call me tomorrow please", rowNumber: 2 },

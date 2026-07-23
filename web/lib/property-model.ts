@@ -1,3 +1,5 @@
+import type { AnalyzedSignal } from "./agents/property-intelligence.ts";
+
 export type PropertyStatus = "urgent" | "inherited" | "violation" | "absentee" | "expired" | "warm" | "review";
 
 export type PropertyTimelineEvent = {
@@ -33,6 +35,9 @@ export type PropertyRecord = {
   assessedValue?: number | null;
   yearBuilt?: number | null;
   ownerMailingAddress?: string | null;
+  // Real, cited public-record evidence from analyzePropertyContext (populated by
+  // NYC enrichment); kept separate from the short `signals` chip labels above.
+  intelligenceSignals?: AnalyzedSignal[];
   enriched?: boolean;
 };
 

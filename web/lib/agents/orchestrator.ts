@@ -28,6 +28,8 @@ export type OrchestratorDraft = {
   channel: OutreachChannel;
   allowed: boolean;
   message: string;
+  subject?: string;
+  evidenceUsed?: string[];
   complianceWarnings: string[];
   checks: ComplianceCheck[];
 };
@@ -136,6 +138,7 @@ export async function runOrchestrator(
         channel,
         permission: permissionFor(context, target.id),
         rationale: `${target.summary} Recommended next action: ${target.nextAction}`,
+        evidenceSignals: target.intelligenceSignals?.length ? target.intelligenceSignals : undefined,
       },
       { apiKey: context.apiKey, client: context.client },
     );
@@ -154,6 +157,8 @@ export async function runOrchestrator(
           channel: result.channel,
           allowed: result.allowed,
           message: result.message,
+          subject: result.subject,
+          evidenceUsed: result.evidenceUsed,
           complianceWarnings: result.complianceWarnings,
           checks: result.checks,
         },

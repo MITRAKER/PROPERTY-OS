@@ -24,6 +24,7 @@ import type { PropertyRecord, PropertyTimelineEvent } from "../lib/property-mode
 import type { ImportedPropertyRecord } from "../lib/briefing";
 import type { ModelRunLog } from "../lib/agents/types";
 import type { PropertyContext } from "../lib/agents/property-context";
+import type { AnalyzedSignal } from "../lib/agents/property-intelligence";
 import { currentWorkspaceId } from "../lib/auth/context";
 import { normalizeContact } from "../lib/contacts/contact-model";
 
@@ -269,6 +270,7 @@ const COLUMN_MIGRATIONS = [
   "ALTER TABLE approvals ADD COLUMN provider_message_id TEXT",
   "ALTER TABLE approvals ADD COLUMN delivery_error TEXT",
   "ALTER TABLE properties ADD COLUMN owner_mailing_address TEXT",
+  "ALTER TABLE properties ADD COLUMN intelligence_signals TEXT",
 ];
 
 // Assign all pre-multitenancy rows to the dev workspace so existing local data is
@@ -433,6 +435,15 @@ async function rowToPropertyRecord(db: Db, row: typeof properties.$inferSelect):
     type: (event.type as PropertyTimelineEvent["type"]) ?? "note",
   }));
 
+  let intelligenceSignals: AnalyzedSignal[] | undefined;
+  if (row.intelligenceSignals) {
+    try {
+      intelligenceSignals = JSON.parse(row.intelligenceSignals) as AnalyzedSignal[];
+    } catch {
+      // Leave undefined; a corrupt/legacy value should never break the read path.
+    }
+  }
+
   return {
     id: row.id,
     address: row.address,
@@ -457,6 +468,7 @@ async function rowToPropertyRecord(db: Db, row: typeof properties.$inferSelect):
     assessedValue: row.assessedValue,
     yearBuilt: row.yearBuilt,
     ownerMailingAddress: row.ownerMailingAddress,
+    intelligenceSignals,
     enriched: row.enriched,
   };
 }
@@ -702,7 +714,7 @@ function formatUsd(value: number): string {
   return `$${value}`;
 }
 
-export async function enrichProperty(propertyId: string, context: PropertyContext) {
+export async function enrichProperty(propertyId: string, context: PropertyContext, analyzedSignals?: AnalyzedSignal[]) {
   const db = await ready();
   const workspaceId = ws();
   const [property] = await db.select().from(properties).where(and(eq(properties.workspaceId, workspaceId), eq(properties.id, propertyId))).limit(1);
@@ -719,6 +731,7 @@ export async function enrichProperty(propertyId: string, context: PropertyContex
       assessedValue: assessed ?? property.assessedValue,
       yearBuilt: context.facts.yearBuilt ?? property.yearBuilt,
       ownerMailingAddress: context.facts.ownerMailingAddress ?? property.ownerMailingAddress,
+      intelligenceSignals: analyzedSignals ? JSON.stringify(analyzedSignals) : property.intelligenceSignals,
       equity: assessed ? formatUsd(assessed) : property.equity,
       enriched: true,
       updatedAt: sql`CURRENT_TIMESTAMP`,

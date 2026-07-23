@@ -62,6 +62,11 @@ export type OutreachResult = {
   channel: OutreachChannel;
   allowed: boolean;
   message: string;
+  // Populated only for channel "email". Never set on a blocked result.
+  subject?: string;
+  // Server-verified evidence citations, resolved from supplied evidence by id —
+  // never trusted as freeform model text. Only set when evidence was supplied.
+  evidenceUsed?: string[];
   approvalRequired: true;
   complianceWarnings: string[];
   checks: ComplianceCheck[];

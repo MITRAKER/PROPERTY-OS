@@ -17,6 +17,5 @@ Thumbs.db
 .tmp_prd/
 ~$*.docx
 
-# Third-party agent tooling installed locally (impeccable). Not part of the app;
-# reinstall with: git clone https://github.com/pbakaus/impeccable
+# Locally-installed agent tooling — never part of the app.
 .claude/skills/

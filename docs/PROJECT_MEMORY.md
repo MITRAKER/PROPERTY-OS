@@ -92,7 +92,7 @@ The runnable application lives in `web/`.
 - **Tasks:** Persisted task completion, **task creation**, and **auto-generated follow-up tasks** from extracted follow-up dates; every change is audited.
 - **Approvals:** The human-approval gate. Drafted outreach is held here as `pending` and a person approves or rejects it. Includes the recent audit log.
 - **Contacts:** Owners/contacts as first-class records (`people` / `property_people`), each showing their related properties.
-- **Settings:** Runtime configuration and account/identity, plus an authorization-gated active-listings connection for REBNY RLS or TRREB. A workspace can save its board choice only after confirming membership/brokerage authorization and an executed data agreement. Secrets are never shown or stored in the workspace database.
+- **Settings:** Runtime configuration, notifications/reminders, and account/identity.
 - **Workspace deal room:** a transparent **score breakdown** (`web/lib/scoring.ts`, versioned), an **Offers** tracker, and a **Records & documents / sales-history** section fed by ACRIS/DOB during enrichment.
 - **Global command palette** (⌘K), a **notifications** dropdown, **saved neighborhoods**, a **weekly intelligence** strip, a CSV **rejected-rows** notice, **voice input** for the orchestrator, and a live **user identity** (ChatGPT headers when present, "Local session" otherwise).
 
@@ -106,7 +106,6 @@ The runnable application lives in `web/`.
 - Neighborhood pulse figures are computed from the properties actually in the workspace (`web/lib/insights.ts`), not hardcoded.
 - **Free notification channels (no paid service).** Desktop notifications via the browser's own Notification API fire for due follow-ups and pending approvals. Follow-ups export as `.ics` calendar events with alarms (`GET /api/calendar`), so the agent's own calendar reminds them even when Property OS is closed. Approved drafts render as print-ready letters (`GET /api/outreach/letter?approvalId=`) — the mailing address is free from public records, making direct mail the zero-cost way to reach a prospected owner. Paid SMS (Twilio) remains optional and unconfigured by default.
 - **Outreach delivery is real but human-triggered.** Approving a draft with a recipient actually sends it — email via Resend, SMS via Twilio. Nothing sends autonomously: a person must approve, and the compliance gate (do-not-contact + channel permission) is **re-checked at send time**, so a property flagged do-not-contact after drafting is still blocked. Voice calls are deliberately never auto-placed (TCPA); the approved script is handed to a person to dial. Direct mail is produced offline.
-- **Active listings are licensed and authorization-gated.** Property OS offers REBNY RLS (NYC) and TRREB (GTA) connection choices, but never treats PLUTO/ACRIS or other public records as MLS data. A workspace must attest board/brokerage authorization and an executed IDX/VOW/data-feed agreement. Search remains locked until the corresponding board-issued RESO Property endpoint and token are configured as server secrets.
 
 ### Real working P0 path (now persistent + orchestrated)
 
@@ -141,9 +140,6 @@ flowchart LR
     AP --> GATE["Send-time compliance gate"]
     GATE --> SEND["Resend email / Twilio SMS / printable letter"]
 
-    API --> LA["Workspace listing authorization"]
-    LA --> RESO["Licensed REBNY RLS / TRREB RESO feed"]
-
     UI --> VOICE["Browser speech output + optional command input"]
 ```
 
@@ -159,14 +155,14 @@ flowchart LR
 
 - **Sign-in:** Google OAuth 2.0 authorization-code flow (`web/lib/auth/google.ts`, routes under `web/app/api/auth/`). Sessions are stateless, signed cookies (HMAC-SHA256, `web/lib/auth/session.ts`) using `SESSION_SECRET`.
 - **Dev fallback:** when `GOOGLE_CLIENT_ID` is unset, the app auto-provisions a "Local Developer" user + "Local workspace" so local development needs no login. `/api/me` reports `needsLogin` so the frontend shows a Google sign-in screen only in production.
-- **Multi-tenancy:** `users`, `workspaces`, `workspace_members` tables; every data table carries `workspace_id`. A request's identity + workspace is put in an `AsyncLocalStorage` context (`web/lib/auth/context.ts`) by the `withAuth` gate, and repository operations are designed to scope queries to `currentWorkspaceId()`. Seeded/imported ids are namespaced per workspace (`<workspaceId>::<id>`). A July 24 audit found two internal contact re-reads that still need an explicit workspace predicate; see Section 19.
+- **Multi-tenancy:** `users`, `workspaces`, `workspace_members` tables; every data table carries `workspace_id`. A request's identity + workspace is put in an `AsyncLocalStorage` context (`web/lib/auth/context.ts`) by the `withAuth` gate, and repository operations scope queries to `currentWorkspaceId()`. Seeded/imported ids are namespaced per workspace (`<workspaceId>::<id>`). The two internal contact re-reads found in the July 24 audit now carry explicit workspace predicates and are regression-tested; see Section 19.
 - Every data API route is wrapped in `withAuth`; unauthenticated requests get 401 in production (dev fallback locally). `/api/config` is the only unauthenticated data-adjacent route (non-secret runtime flags only).
 
 ### Persistence
 
 - **Cloudflare D1 (SQLite)** accessed through **Drizzle ORM** (`web/db/schema.ts`, `web/db/repo.ts`).
 - The binding is reached via `import { env } from "cloudflare:workers"` (`web/db/index.ts`), loaded through a dynamic import so non-worker tooling (the Node server-render test) can still load the bundle.
-- Tables (19): `users`, `workspaces`, `workspace_members`, `properties`, `people`, `property_people`, `signals`, `timeline_events`, `tasks`, `contact_permissions`, `model_runs`, `approvals`, `contacts`, `suppressions`, `documents`, `offers`, `saved_neighborhoods`, `listing_connections`, and `audit_log`.
+- Tables (18): `users`, `workspaces`, `workspace_members`, `properties`, `people`, `property_people`, `signals`, `timeline_events`, `tasks`, `contact_permissions`, `model_runs`, `approvals`, `contacts`, `suppressions`, `documents`, `offers`, `saved_neighborhoods`, and `audit_log`.
 - Locally there is no migration runner, so `repo.ts` creates tables with idempotent `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE` on first use. No demo/sample data is ever seeded — workspaces start empty. `drizzle-kit generate` still produces migrations for the deploy path.
 - API routes are the only DB consumers; agent logic is pure and DB-free so it stays unit-testable.
 
@@ -211,15 +207,9 @@ PROPERTY_DATA_PROVIDER=workspace
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 SESSION_SECRET=
-REBNY_RESO_PROPERTY_URL=
-REBNY_RESO_ACCESS_TOKEN=
-TRREB_RESO_PROPERTY_URL=
-TRREB_RESO_ACCESS_TOKEN=
 ```
 
 Auth is optional locally: with `GOOGLE_CLIENT_ID` unset the app runs as the dev-fallback user. In production set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and a strong `SESSION_SECRET`, and configure the Google OAuth redirect URI `https://<domain>/api/auth/callback`.
-
-Licensed listing variables are optional. The URL must be the board/vendor's RESO `Property` resource and the access token must be stored as a server secret. A configured token alone is insufficient: the signed-in workspace must also save the matching REBNY RLS or TRREB choice and both authorization attestations before `/api/listings/search` will make a request.
 
 Never commit real secret values. `.env` and `.env.local` must remain ignored.
 
@@ -286,7 +276,6 @@ Workspace
   approvals
   suppressions
   saved_neighborhoods
-  listing_connections
   model_runs
   audit_log
 ```
@@ -323,7 +312,7 @@ npm run lint
 npm test
 ```
 
-At the July 24, 2026 implementation checkpoint, `npm run lint` passed, all 79 unit tests passed, the production Vinext build completed, and the server-render smoke test passed. The suite covers extraction, flexible imports, XLSX parsing, agents, deterministic compliance, quiet hours, suppression, CAN-SPAM footer generation, scoring, prospecting, property-data mapping, owner mailing, contacts, licensed RESO request/mapping behavior, repository safety invariants, notifications/calendar/letters, and rendered output.
+At the July 24, 2026 implementation checkpoint, `npm run lint` passed, all 74 unit tests passed, the production Vinext build completed, and the server-render smoke test passed. The suite covers extraction, flexible imports, XLSX parsing, agents, deterministic compliance, quiet hours, suppression, CAN-SPAM footer generation, scoring, prospecting, property-data mapping, owner mailing, contacts, repository safety invariants, notifications/calendar/letters, and rendered output.
 
 ## 12. Repository and deployment memory
 
@@ -379,9 +368,6 @@ web/lib/agents/anthropic.ts            Shared Claude structured-output helper
 web/lib/data/workspace-provider.ts     Workspace records -> PropertyContext (default source)
 web/lib/data/nyc-provider.ts           Live NYC GeoSearch + PLUTO + HPD provider
 web/lib/data/provider.ts               createPropertyDataProvider(source) factory
-web/lib/listings/provider.ts           Licensed REBNY/TRREB RESO adapter (server credentials only)
-web/app/api/listings/connection/       Workspace board choice + authorization attestations
-web/app/api/listings/search/           Gated search of the configured active-listing feed
 web/lib/briefing.ts                    CSV parsing, validation, ranking, import mapping
 web/lib/xlsx.ts                        Dependency-free modern XLSX (ZIP/XML) reader
 web/lib/extraction.ts                  Claude/local extraction and metrics
@@ -400,7 +386,7 @@ web/.openai/hosting.json               Sites deployment binding (d1 = "DB")
 - Not a generic AI chatbot
 - Not only a dialer
 - Not an autonomous outreach bot
-- Not an unlicensed MLS/RLS redistributor. Active listings are available only through a board-authorized workspace and its configured licensed RESO feed
+- Not an MLS/RLS listings portal. Active-listing feeds remain future licensed integration work and are outside the current build
 - Not a full title plant, valuation service, people-search database, or mirrored public-record warehouse; it performs targeted lookups against official NYC sources
 - Not the same as an inbound AI sales agent for Colombian pre-construction projects
 
@@ -434,7 +420,7 @@ The classmate’s pre-construction agent focuses on qualifying and converting bu
 - Replace the stylized map with a real parcel/map provider — **done: Leaflet + OpenStreetMap tiles, with click-to-prospect lead generation from live PLUTO parcels**
 - Per-property enrichment persists real BBL/facts/coordinates/public signals — **done (`/api/properties/enrich`)**
 - Add saved neighborhoods and weekly intelligence summaries — **done (saved views on the Properties page + a weekly intelligence strip on the briefing)**
-- Add a licensed active-listing integration seam — **done conditionally: REBNY RLS and TRREB choices, workspace authorization attestations, server-only RESO credentials, authenticated search, and honest locked/pending/ready UI. Live results require credentials supplied under the user's own board agreement.**
+- Evaluate a licensed active-listing integration later — **deferred: it requires a board-approved agreement and credentials, and is outside the current Claude build**
 
 ### P3 — Orchestrated agents (MVP shipped)
 
@@ -475,7 +461,7 @@ The classmate’s pre-construction agent focuses on qualifying and converting bu
 - **Map-click prospecting selected as the "next lead" engine:** rather than buying lead lists, an agent clicks a block and Property OS ranks the real parcels there from public records, with the reason for every point. Contact details still have to come from the CRM or an authorized provider.
 - **Google OAuth + workspace tenancy selected:** the product is intended to be a real, deployed SaaS holding real agents' private CRM data, so sign-in (Google) and per-workspace data isolation are required, not optional. Chosen over ChatGPT-platform auth to keep it deployable as a standalone app.
 - **Repository owns tenant scoping:** queries must be scoped by an `AsyncLocalStorage` workspace context rather than trusting callers. This remains a hard rule; the two contact re-reads found in the July 24 audit were corrected and are now covered by a repository-safety test.
-- **Licensed listings remain separate from public records:** REBNY RLS/TRREB active inventory can only come from a workspace authorized under the applicable board/data agreement. Property OS stores the choice and attestations, never the token; board-issued RESO credentials stay server-side. Public ACRIS/PLUTO data is never labeled as MLS/RLS inventory.
+- **Active listings remain deferred:** the current product does not include an MLS/RLS connector or listings UI. Any future implementation must use a board-authorized agreement and server-side credentials, and public ACRIS/PLUTO data must never be labeled as MLS/RLS inventory.
 
 ## 17. Next-session checklist
 
@@ -515,7 +501,7 @@ Before implementing the next feature:
   controls above are built, but real-outreach go-live still gates on a signed
   vendor data contract, National DNC registration, and an attorney consult —
   which a local/demo build does not need.
-- **Test count:** 79 unit tests + production build + one server-render smoke test, all green on July 24, 2026.
+- **Test count:** 74 unit tests + production build + one server-render smoke test, all green on July 24, 2026.
 
 ## 19. July 24, 2026 Claude-build audit
 
@@ -526,7 +512,7 @@ This checkpoint records what was verified directly from the repository and runni
 - Branch `Frontend` was clean for tracked files at audited HEAD `26ef04b` before this memory update. The recent implementation sequence includes the production-ready app, real D1 deployment configuration, accessibility/SEO polish, Excel import, the coverflow dashboard, CI deployment, and removal of local-only agent tooling.
 - The production Worker root returned HTTP 200. `GET /api/health/db` also returned HTTP 200 with `{"ok":true,"propertyCount":0,"sample":[]}`, confirming that the Worker can reach D1 and that the current production workspace is intentionally empty.
 - `npm run lint` passed.
-- `npm test` passed before the follow-up changes: 72 unit tests, a successful production Vinext build, and one server-render smoke test. After the three audit fixes and licensed-listing seam were added, the count increased to 79 unit tests; see the implementation checkpoint in Section 11.
+- `npm test` passed before the follow-up changes: 72 unit tests, a successful production Vinext build, and one server-render smoke test. After the three audit fixes were added, the count increased to 74 unit tests; see the implementation checkpoint in Section 11.
 - The four agent roles are implemented. The Orchestrator uses deterministic intent routing; the specialist agents use Claude when configured and labeled deterministic fallbacks otherwise. Agents remain database-free.
 - Official NYC lookups, property enrichment, Leaflet/OSM mapping, map prospecting, D1 persistence, Google OAuth/session support, human approvals, Resend email, Twilio SMS, print-ready letters, contact-provider integration, browser notifications, calendar export, and browser speech input/output are present in code.
 - The app starts empty and does not pretend test fixtures are live data. The messy-leads files live under `web/tests/fixtures/`.
@@ -537,11 +523,8 @@ This checkpoint records what was verified directly from the repository and runni
 2. **Contact tenant scope fixed:** the two internal contact re-reads now include the signed-session `workspace_id`, with a repository-safety regression test preventing ID-only contact reads.
 3. **Legacy `.xls` claim fixed:** the picker accepts CSV and modern `.xlsx` only. If a legacy `.xls` reaches the handler, the UI explains that it must be saved as `.xlsx` or CSV instead of trying to parse binary data as text.
 
-### Licensed active-listing option added
+### Scope correction after the audit
 
-- Settings presents REBNY RLS (NYC) and TRREB (GTA) choices.
-- Both membership/brokerage authorization and an executed IDX/VOW/data-feed agreement must be affirmed before the connection is saved.
-- `listing_connections` stores only the workspace-scoped choice and attestations. Tokens never enter D1 or browser responses.
-- `/api/listings/search` is authenticated, checks the saved authorization again, and refuses to call a provider unless the matching server-side RESO endpoint/token is configured.
-- The generic adapter requests only `StandardStatus eq 'Active'`, maps standard RESO fields, caps a request at 50 records, requires HTTPS, and labels every result with its licensed source.
-- This creates a real integration path, not demo inventory. Without board-issued credentials the UI truthfully remains in “credentials needed” state.
+- The proposed REBNY RLS/TRREB connector, settings interface, routes, provider, database table, configuration, and related tests were removed at the user's request.
+- Claude's existing product design and implementation remain the source of truth.
+- Only the three audit fixes above were retained. Active MLS/RLS listings remain future licensed integration work, not part of the current build.

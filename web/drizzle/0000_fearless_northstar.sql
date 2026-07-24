@@ -62,15 +62,6 @@ CREATE TABLE `documents` (
 	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE `listing_connections` (
-	`workspace_id` text PRIMARY KEY NOT NULL,
-	`board` text NOT NULL,
-	`member_confirmed` integer DEFAULT false NOT NULL,
-	`agreement_confirmed` integer DEFAULT false NOT NULL,
-	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
-	`updated_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL
-);
---> statement-breakpoint
 CREATE TABLE `model_runs` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`workspace_id` text DEFAULT '' NOT NULL,

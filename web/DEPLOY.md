@@ -69,14 +69,6 @@ Set from anywhere with `--name property-os-morning-briefing`:
 - **Outreach/compliance** (only if you demo real sending): `RESEND_API_KEY`,
   `OUTREACH_FROM_EMAIL`, `OUTREACH_MAILING_ADDRESS`, Twilio keys, etc. See
   `.env.example`. Not needed for the core demo.
-- **Licensed active listings** (optional and never needed for the core demo):
-  an authorized REBNY RLS or TRREB member/brokerage must obtain a RESO Property
-  endpoint and access token through its executed data agreement. Set the matching
-  `REBNY_RESO_PROPERTY_URL` + `REBNY_RESO_ACCESS_TOKEN`, or
-  `TRREB_RESO_PROPERTY_URL` + `TRREB_RESO_ACCESS_TOKEN`. Tokens must be Wrangler
-  secrets; the URL may be a regular server environment variable. The user must
-  still select the same board and complete both authorization attestations in
-  Settings before Property OS makes any listing request.
 
 ## Redeploying after changes
 

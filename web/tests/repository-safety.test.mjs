@@ -27,9 +27,3 @@ test("all contact record reads include the signed-session workspace", () => {
   assert.ok(scopedContactReads.length >= 5, "expected every contact operation to carry workspace scope");
 });
 
-test("licensed listing choice is mirrored in schema and bootstrap DDL", () => {
-  assert.match(schema, /listingConnections = sqliteTable\("listing_connections"/);
-  assert.match(repo, /CREATE TABLE IF NOT EXISTS listing_connections/);
-  assert.match(repo, /\.where\(eq\(listingConnections\.workspaceId,\s*workspaceId\)\)/);
-});
-

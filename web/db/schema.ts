@@ -233,17 +233,6 @@ export const savedNeighborhoods = sqliteTable("saved_neighborhoods", {
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
-// The workspace's licensed-listing board choice. Credentials are deliberately
-// never stored here: REBNY/TRREB RESO tokens remain server-side secrets.
-export const listingConnections = sqliteTable("listing_connections", {
-  workspaceId: text("workspace_id").primaryKey(),
-  board: text("board").notNull(), // rebny_rls | trreb
-  memberConfirmed: integer("member_confirmed", { mode: "boolean" }).notNull().default(false),
-  agreementConfirmed: integer("agreement_confirmed", { mode: "boolean" }).notNull().default(false),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-});
-
 // Append-only audit trail for every consequential write.
 export const auditLog = sqliteTable("audit_log", {
   id: integer("id").primaryKey({ autoIncrement: true }),

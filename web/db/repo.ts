@@ -13,7 +13,6 @@ import {
   contacts,
   suppressions,
   savedNeighborhoods,
-  listingConnections,
   signals,
   tasks,
   timelineEvents,
@@ -239,14 +238,6 @@ const DDL = [
     value TEXT NOT NULL,
     reason TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  )`,
-  `CREATE TABLE IF NOT EXISTS listing_connections (
-    workspace_id TEXT PRIMARY KEY,
-    board TEXT NOT NULL,
-    member_confirmed INTEGER NOT NULL DEFAULT 0,
-    agreement_confirmed INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
 ];
 
@@ -1205,57 +1196,6 @@ async function setContactPermission(db: Db, propertyId: string, doNotContact: bo
     .insert(contactPermissions)
     .values({ propertyId, workspaceId: ws(), doNotContact, textAllowed: false })
     .onConflictDoUpdate({ target: contactPermissions.propertyId, set: { doNotContact, updatedAt: sql`CURRENT_TIMESTAMP` } });
-}
-
-export type ListingBoard = "rebny_rls" | "trreb";
-
-export async function getListingConnection() {
-  const db = await ready();
-  const workspaceId = ws();
-  const [row] = await db
-    .select()
-    .from(listingConnections)
-    .where(eq(listingConnections.workspaceId, workspaceId))
-    .limit(1);
-  return row ?? null;
-}
-
-export async function setListingConnection(input: {
-  board: ListingBoard;
-  memberConfirmed: boolean;
-  agreementConfirmed: boolean;
-}) {
-  const db = await ready();
-  const workspaceId = ws();
-  await db
-    .insert(listingConnections)
-    .values({ workspaceId, ...input })
-    .onConflictDoUpdate({
-      target: listingConnections.workspaceId,
-      set: { ...input, updatedAt: sql`CURRENT_TIMESTAMP` },
-    });
-  await appendAudit(db, {
-    actor: "user",
-    action: "configure_listing_connection",
-    entityType: "listing_connection",
-    entityId: workspaceId,
-    detail: `${input.board}; member=${input.memberConfirmed}; agreement=${input.agreementConfirmed}`,
-  });
-  return getListingConnection();
-}
-
-export async function deleteListingConnection() {
-  const db = await ready();
-  const workspaceId = ws();
-  await db.delete(listingConnections).where(eq(listingConnections.workspaceId, workspaceId));
-  await appendAudit(db, {
-    actor: "user",
-    action: "disconnect_listing_board",
-    entityType: "listing_connection",
-    entityId: workspaceId,
-    detail: "",
-  });
-  return { disconnected: true };
 }
 
 // Persist newly imported/analyzed leads as real property workspaces (scoped to the

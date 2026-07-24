@@ -28,40 +28,6 @@ type AppConfig = {
   contactProvider?: { name: string; configured: boolean };
 };
 
-type ListingBoard = "rebny_rls" | "trreb";
-type ListingBoardCapability = {
-  board: ListingBoard;
-  label: string;
-  market: string;
-  configured: boolean;
-  requirement: string;
-};
-type ListingConnectionResponse = {
-  connection: {
-    board: ListingBoard;
-    memberConfirmed: boolean;
-    agreementConfirmed: boolean;
-  } | null;
-  boards: ListingBoardCapability[];
-  authorized: boolean;
-  ready: boolean;
-  status: "not_connected" | "authorization_required" | "credentials_required" | "ready";
-};
-type ActiveListing = {
-  id: string;
-  listingId: string;
-  address: string;
-  city: string;
-  region: string;
-  postalCode: string;
-  listPrice: number | null;
-  bedrooms: number | null;
-  bathrooms: number | null;
-  propertyType: string;
-  modifiedAt: string | null;
-  source: string;
-};
-
 type OrchestratorRecommendation = {
   propertyId: string;
   address: string;
@@ -289,15 +255,6 @@ export default function Home() {
   const [workspaceName, setWorkspaceName] = useState("");
   const [needsLogin, setNeedsLogin] = useState(false);
   const [config, setConfig] = useState<AppConfig | null>(null);
-  const [listingAccess, setListingAccess] = useState<ListingConnectionResponse | null>(null);
-  const [listingBoard, setListingBoard] = useState<ListingBoard>("rebny_rls");
-  const [listingMemberConfirmed, setListingMemberConfirmed] = useState(false);
-  const [listingAgreementConfirmed, setListingAgreementConfirmed] = useState(false);
-  const [listingSaving, setListingSaving] = useState(false);
-  const [listingMessage, setListingMessage] = useState("");
-  const [listingQuery, setListingQuery] = useState("");
-  const [activeListings, setActiveListings] = useState<ActiveListing[]>([]);
-  const [listingSearching, setListingSearching] = useState(false);
   const [people, setPeople] = useState<PersonRecord[]>([]);
   const [offers, setOffers] = useState<OfferRecord[]>([]);
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
@@ -409,22 +366,6 @@ export default function Home() {
       if (configData) setConfig(configData);
     } catch {
       // Ignore.
-    }
-  }, []);
-
-  const refreshListingAccess = useCallback(async () => {
-    try {
-      const response = await fetch("/api/listings/connection");
-      const data = (await response.json()) as ListingConnectionResponse & { error?: string };
-      if (!response.ok) throw new Error(data.error ?? "Could not load licensed listing access.");
-      setListingAccess(data);
-      if (data.connection) {
-        setListingBoard(data.connection.board);
-        setListingMemberConfirmed(data.connection.memberConfirmed);
-        setListingAgreementConfirmed(data.connection.agreementConfirmed);
-      }
-    } catch (caughtError) {
-      setListingMessage(caughtError instanceof Error ? caughtError.message : "Could not load licensed listing access.");
     }
   }, []);
 
@@ -589,7 +530,6 @@ export default function Home() {
         refreshPeople(),
         refreshSavedViews(),
         loadIdentityAndConfig(),
-        refreshListingAccess(),
       ]);
     })();
     return () => {
@@ -597,7 +537,7 @@ export default function Home() {
       window.clearInterval(clockTimer);
       if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     };
-  }, [refreshProperties, refreshTasks, refreshApprovals, refreshTrace, refreshPeople, refreshSavedViews, loadIdentityAndConfig, refreshListingAccess]);
+  }, [refreshProperties, refreshTasks, refreshApprovals, refreshTrace, refreshPeople, refreshSavedViews, loadIdentityAndConfig]);
 
   function navigate(nextView: Exclude<AppView, "workspace">) {
     stopAudio();
@@ -919,74 +859,6 @@ export default function Home() {
 
   function propertyForAddress(address: string): PropertyRecord | undefined {
     return properties.find((property) => property.address === address);
-  }
-
-  async function saveListingConnection() {
-    setListingSaving(true);
-    setListingMessage("");
-    setActiveListings([]);
-    try {
-      const response = await fetch("/api/listings/connection", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          board: listingBoard,
-          memberConfirmed: listingMemberConfirmed,
-          agreementConfirmed: listingAgreementConfirmed,
-        }),
-      });
-      const data = (await response.json()) as ListingConnectionResponse & { error?: string };
-      if (!response.ok) throw new Error(data.error ?? "Could not save licensed listing access.");
-      setListingAccess(data);
-      setListingMessage(
-        data.ready
-          ? `${data.boards.find((board) => board.board === listingBoard)?.label ?? "Listing feed"} is ready.`
-          : "Your authorization choice is saved. A server administrator must now add the board-issued RESO credentials.",
-      );
-      await refreshTrace();
-    } catch (caughtError) {
-      setListingMessage(caughtError instanceof Error ? caughtError.message : "Could not save licensed listing access.");
-    } finally {
-      setListingSaving(false);
-    }
-  }
-
-  async function disconnectListingBoard() {
-    setListingSaving(true);
-    setListingMessage("");
-    try {
-      const response = await fetch("/api/listings/connection", { method: "DELETE" });
-      const data = (await response.json()) as ListingConnectionResponse & { error?: string };
-      if (!response.ok) throw new Error(data.error ?? "Could not disconnect the listing board.");
-      setListingAccess(data);
-      setListingMemberConfirmed(false);
-      setListingAgreementConfirmed(false);
-      setActiveListings([]);
-      setListingMessage("Licensed listing access disconnected.");
-      await refreshTrace();
-    } catch (caughtError) {
-      setListingMessage(caughtError instanceof Error ? caughtError.message : "Could not disconnect the listing board.");
-    } finally {
-      setListingSaving(false);
-    }
-  }
-
-  async function searchLicensedListings() {
-    setListingSearching(true);
-    setListingMessage("");
-    try {
-      const response = await fetch(`/api/listings/search?query=${encodeURIComponent(listingQuery)}&limit=20`);
-      const data = (await response.json()) as { listings?: ActiveListing[]; error?: string; source?: string };
-      if (!response.ok) throw new Error(data.error ?? "Could not search active listings.");
-      const listings = Array.isArray(data.listings) ? data.listings : [];
-      setActiveListings(listings);
-      setListingMessage(listings.length > 0 ? `${listings.length} active listings returned from ${data.source}.` : "The licensed feed returned no matching active listings.");
-    } catch (caughtError) {
-      setActiveListings([]);
-      setListingMessage(caughtError instanceof Error ? caughtError.message : "Could not search active listings.");
-    } finally {
-      setListingSearching(false);
-    }
   }
 
   async function handleFile(event: ChangeEvent<HTMLInputElement>) {
@@ -1953,121 +1825,6 @@ export default function Home() {
                   </dl>
                 ) : <p className="muted">Loading configuration…</p>}
                 <small>Change these in <code>web/.env.local</code>. The live NYC lookup can be forced per request with <code>?source=nyc</code>.</small>
-              </section>
-              <section className="panel settings-card listing-access-card">
-                <div className="listing-access-heading">
-                  <div>
-                    <p className="overline">Licensed listing data</p>
-                    <h2>Active listings</h2>
-                  </div>
-                  <span className={`listing-status ${listingAccess?.ready ? "ready" : "locked"}`}>
-                    {listingAccess?.ready ? "Feed ready" : listingAccess?.connection ? "Credentials needed" : "Locked"}
-                  </span>
-                </div>
-                <p className="settings-explainer">
-                  Active listings are not public data. Choose a board only if you are an authorized member or represent an authorized brokerage with an executed data agreement.
-                </p>
-                <div className="listing-board-options" role="radiogroup" aria-label="Licensed listing board">
-                  {(listingAccess?.boards ?? [
-                    { board: "rebny_rls" as const, label: "REBNY RLS", market: "New York City", configured: false, requirement: "REBNY/RLS authorization and an executed IDX or data-feed agreement" },
-                    { board: "trreb" as const, label: "TRREB", market: "Greater Toronto Area", configured: false, requirement: "TRREB authorization and an executed VOW, IDX, or data-feed agreement" },
-                  ]).map((board) => (
-                    <label className={`listing-board-option ${listingBoard === board.board ? "selected" : ""}`} key={board.board}>
-                      <input
-                        type="radio"
-                        name="listing-board"
-                        value={board.board}
-                        checked={listingBoard === board.board}
-                        onChange={() => {
-                          setListingBoard(board.board);
-                          setListingMessage("");
-                          setActiveListings([]);
-                        }}
-                      />
-                      <span>
-                        <strong>{board.label}</strong>
-                        <small>{board.market}</small>
-                      </span>
-                      <em>{board.configured ? "server ready" : "needs credentials"}</em>
-                    </label>
-                  ))}
-                </div>
-                <label className="listing-attestation">
-                  <input
-                    type="checkbox"
-                    checked={listingMemberConfirmed}
-                    onChange={(event) => setListingMemberConfirmed(event.target.checked)}
-                  />
-                  <span>I confirm I am a board member or an authorized representative of a member brokerage.</span>
-                </label>
-                <label className="listing-attestation">
-                  <input
-                    type="checkbox"
-                    checked={listingAgreementConfirmed}
-                    onChange={(event) => setListingAgreementConfirmed(event.target.checked)}
-                  />
-                  <span>I confirm the required IDX, VOW, or RESO data-feed agreement is active.</span>
-                </label>
-                <div className="listing-actions">
-                  <button
-                    className="primary-action"
-                    type="button"
-                    disabled={listingSaving || !listingMemberConfirmed || !listingAgreementConfirmed}
-                    onClick={saveListingConnection}
-                  >
-                    {listingSaving ? "Saving…" : listingAccess?.connection ? "Update licensed access" : "Connect licensed feed"}
-                  </button>
-                  {listingAccess?.connection && (
-                    <button className="secondary-action" type="button" disabled={listingSaving} onClick={disconnectListingBoard}>
-                      Disconnect
-                    </button>
-                  )}
-                </div>
-                {listingMessage && <p className="listing-message" role="status">{listingMessage}</p>}
-                {listingAccess?.status === "credentials_required" && (
-                  <p className="listing-notice">
-                    Your membership choice is saved, but Property OS will not request listing data until the board-issued endpoint and token are configured as server secrets.
-                  </p>
-                )}
-                {listingAccess?.ready && (
-                  <div className="licensed-search">
-                    <label htmlFor="listing-query">Search the active licensed feed</label>
-                    <div>
-                      <input
-                        id="listing-query"
-                        value={listingQuery}
-                        onChange={(event) => setListingQuery(event.target.value)}
-                        placeholder={listingBoard === "rebny_rls" ? "Address, NYC neighborhood, or ZIP" : "Address, GTA city, or postal code"}
-                      />
-                      <button className="primary-action" type="button" disabled={listingSearching} onClick={searchLicensedListings}>
-                        {listingSearching ? "Searching…" : "Search active listings"}
-                      </button>
-                    </div>
-                    {activeListings.length > 0 && (
-                      <div className="licensed-results">
-                        {activeListings.map((listing) => (
-                          <article key={listing.id}>
-                            <div>
-                              <strong>{listing.address}</strong>
-                              <small>{[listing.city, listing.region, listing.postalCode].filter(Boolean).join(", ")}</small>
-                            </div>
-                            <span>
-                              {listing.listPrice === null
-                                ? "Price withheld"
-                                : new Intl.NumberFormat(listingBoard === "trreb" ? "en-CA" : "en-US", {
-                                    style: "currency",
-                                    currency: listingBoard === "trreb" ? "CAD" : "USD",
-                                    maximumFractionDigits: 0,
-                                  }).format(listing.listPrice)}
-                            </span>
-                            <small>{[listing.bedrooms !== null ? `${listing.bedrooms} bd` : "", listing.bathrooms !== null ? `${listing.bathrooms} ba` : "", listing.propertyType].filter(Boolean).join(" · ")}</small>
-                          </article>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-                <small className="listing-legal">Property OS stores the board choice and attestations only. RESO credentials remain server-side and are never returned to the browser.</small>
               </section>
               <section className="panel settings-card">
                 <p className="overline">Notifications &amp; reminders</p>

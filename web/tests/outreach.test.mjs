@@ -24,11 +24,15 @@ test("drafts an allowed email using only the evidence provided", () => {
 });
 
 test("blocks do-not-contact records and returns no message", () => {
-  const result = prepareOutreach({
-    ...baseRequest,
-    channel: "phone",
-    permissions: { doNotContact: true },
-  });
+  const now = new Date("2026-07-22T14:00:00.000Z"); // 10am ET, inside quiet hours
+  const result = prepareOutreach(
+    {
+      ...baseRequest,
+      channel: "phone",
+      permissions: { doNotContact: true },
+    },
+    now,
+  );
 
   assert.deepEqual(result, {
     propertyId: "property-001",
@@ -39,7 +43,37 @@ test("blocks do-not-contact records and returns no message", () => {
     message: null,
     complianceWarnings: ["The record is marked do not contact."],
     evidenceUsed: [],
+    complianceReceipt: {
+      checkedAt: now.toISOString(),
+      propertyId: "property-001",
+      channel: "phone",
+      checks: [
+        { name: "do_not_contact", passed: false, detail: "The record is marked do not contact." },
+        { name: "channel_permission", passed: false, detail: "No documented permission for phone outreach." },
+        { name: "consent", passed: true, detail: "No documented consent withdrawal on file." },
+        { name: "quiet_hours", passed: true, detail: "Within permitted contact hours (8am–9pm America/New_York)." },
+        { name: "protected_attribute_usage", passed: true, detail: "No protected attributes were used as a signal." },
+        { name: "existing_relationship", passed: true, detail: "A prior relationship is on record with this owner." },
+      ],
+    },
   });
+});
+
+test("compliance receipt shows every check's real outcome, not just the first failure", () => {
+  const outsideHours = new Date("2026-07-22T03:00:00Z"); // 11pm ET
+  const result = prepareOutreach(
+    { ...baseRequest, channel: "phone", permissions: { doNotContact: true } },
+    outsideHours,
+  );
+
+  // Blocked for do-not-contact (the first check), but the receipt still shows
+  // that channel permission and quiet hours would ALSO have failed — the
+  // whole point of an audit trail is not hiding the rest of the picture.
+  const byName = Object.fromEntries(result.complianceReceipt.checks.map((check) => [check.name, check]));
+  assert.equal(byName.do_not_contact.passed, false);
+  assert.equal(byName.channel_permission.passed, false);
+  assert.equal(byName.quiet_hours.passed, false);
+  assert.equal(result.complianceReceipt.checkedAt, outsideHours.toISOString());
 });
 
 test("blocks a channel with no documented permission, even without do-not-contact", () => {

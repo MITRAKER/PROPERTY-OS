@@ -189,5 +189,9 @@ export function rowsToCsv(rows: string[][]): string {
 }
 
 export function isSpreadsheetFile(name: string, type = ""): boolean {
-  return /\.xlsx?$/i.test(name) || type.includes("spreadsheetml") || type.includes("ms-excel");
+  return /\.xlsx$/i.test(name) || type.includes("spreadsheetml");
+}
+
+export function isLegacySpreadsheetFile(name: string, type = ""): boolean {
+  return /\.xls$/i.test(name) || type === "application/vnd.ms-excel";
 }

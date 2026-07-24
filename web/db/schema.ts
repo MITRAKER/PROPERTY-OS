@@ -127,7 +127,8 @@ export const contactPermissions = sqliteTable("contact_permissions", {
   phoneAllowed: integer("phone_allowed", { mode: "boolean" }).notNull().default(true),
   emailAllowed: integer("email_allowed", { mode: "boolean" }).notNull().default(true),
   mailAllowed: integer("mail_allowed", { mode: "boolean" }).notNull().default(true),
-  textAllowed: integer("text_allowed", { mode: "boolean" }).notNull().default(true),
+  // Cold SMS is opt-in. A person must explicitly enable it for this property.
+  textAllowed: integer("text_allowed", { mode: "boolean" }).notNull().default(false),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
@@ -230,6 +231,17 @@ export const savedNeighborhoods = sqliteTable("saved_neighborhoods", {
   search: text("search").notNull().default(""),
   statusFilter: text("status_filter").notNull().default("all"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+// The workspace's licensed-listing board choice. Credentials are deliberately
+// never stored here: REBNY/TRREB RESO tokens remain server-side secrets.
+export const listingConnections = sqliteTable("listing_connections", {
+  workspaceId: text("workspace_id").primaryKey(),
+  board: text("board").notNull(), // rebny_rls | trreb
+  memberConfirmed: integer("member_confirmed", { mode: "boolean" }).notNull().default(false),
+  agreementConfirmed: integer("agreement_confirmed", { mode: "boolean" }).notNull().default(false),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
 // Append-only audit trail for every consequential write.

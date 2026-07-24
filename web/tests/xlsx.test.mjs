@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { parseWorksheet, rowsToCsv, isSpreadsheetFile, xlsxToRows } from "../lib/xlsx.ts";
+import { isLegacySpreadsheetFile, parseWorksheet, rowsToCsv, isSpreadsheetFile, xlsxToRows } from "../lib/xlsx.ts";
 import { parseLeadCsv } from "../lib/briefing.ts";
 
 test("recognises spreadsheet uploads by name or mime type", () => {
   assert.equal(isSpreadsheetFile("Rosedale_Converts.xlsx"), true);
-  assert.equal(isSpreadsheetFile("leads.XLS"), true);
+  assert.equal(isSpreadsheetFile("leads.XLS"), false);
+  assert.equal(isLegacySpreadsheetFile("leads.XLS"), true);
   assert.equal(isSpreadsheetFile("leads.csv"), false);
   assert.equal(
     isSpreadsheetFile("export", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
     true,
   );
+  assert.equal(isLegacySpreadsheetFile("export", "application/vnd.ms-excel"), true);
 });
 
 test("reads inline strings, shared strings, numbers, and gaps", () => {

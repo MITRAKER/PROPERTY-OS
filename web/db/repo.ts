@@ -13,6 +13,7 @@ import {
   contacts,
   suppressions,
   savedNeighborhoods,
+  listingConnections,
   signals,
   tasks,
   timelineEvents,
@@ -146,7 +147,7 @@ const DDL = [
     phone_allowed INTEGER NOT NULL DEFAULT 1,
     email_allowed INTEGER NOT NULL DEFAULT 1,
     mail_allowed INTEGER NOT NULL DEFAULT 1,
-    text_allowed INTEGER NOT NULL DEFAULT 1,
+    text_allowed INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
   `CREATE TABLE IF NOT EXISTS model_runs (
@@ -238,6 +239,14 @@ const DDL = [
     value TEXT NOT NULL,
     reason TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE TABLE IF NOT EXISTS listing_connections (
+    workspace_id TEXT PRIMARY KEY,
+    board TEXT NOT NULL,
+    member_confirmed INTEGER NOT NULL DEFAULT 0,
+    agreement_confirmed INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
 ];
 
@@ -406,7 +415,10 @@ async function insertPropertyRecord(
     await db.insert(timelineEvents).values({ workspaceId, propertyId: id, type: event.type, title: event.title, detail: event.detail, eventDate: event.date });
   }
   const doNotContact = doNotContactOverride ?? (property.status === "review" && /do not|dnc/i.test(property.summary));
-  await db.insert(contactPermissions).values({ propertyId: id, workspaceId, doNotContact }).onConflictDoNothing();
+  await db
+    .insert(contactPermissions)
+    .values({ propertyId: id, workspaceId, doNotContact, textAllowed: false })
+    .onConflictDoNothing();
   return id;
 }
 
@@ -921,7 +933,11 @@ export async function addContact(input: {
     .where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.propertyId, input.propertyId), eq(contacts.value, input.value)))
     .limit(1);
   if (existing.length > 0) {
-    const [row] = await db.select().from(contacts).where(eq(contacts.id, existing[0].id)).limit(1);
+    const [row] = await db
+      .select()
+      .from(contacts)
+      .where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.id, existing[0].id)))
+      .limit(1);
     return row ?? null;
   }
 
@@ -943,7 +959,11 @@ export async function addContact(input: {
     // Log the kind and provenance, not the value itself.
     detail: `${input.type} added from ${input.source ?? "manual"}`,
   });
-  const [row] = await db.select().from(contacts).where(eq(contacts.id, id)).limit(1);
+  const [row] = await db
+    .select()
+    .from(contacts)
+    .where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.id, id)))
+    .limit(1);
   return row ?? null;
 }
 
@@ -1139,7 +1159,7 @@ export async function setPropertyPermission(
   const db = await ready();
   await db
     .insert(contactPermissions)
-    .values({ propertyId, workspaceId: ws(), ...patch })
+    .values({ propertyId, workspaceId: ws(), textAllowed: false, ...patch })
     .onConflictDoUpdate({ target: contactPermissions.propertyId, set: { ...patch, updatedAt: sql`CURRENT_TIMESTAMP` } });
   await appendAudit(db, {
     actor: "user",
@@ -1183,8 +1203,59 @@ export async function createTask(input: {
 async function setContactPermission(db: Db, propertyId: string, doNotContact: boolean) {
   await db
     .insert(contactPermissions)
-    .values({ propertyId, workspaceId: ws(), doNotContact })
+    .values({ propertyId, workspaceId: ws(), doNotContact, textAllowed: false })
     .onConflictDoUpdate({ target: contactPermissions.propertyId, set: { doNotContact, updatedAt: sql`CURRENT_TIMESTAMP` } });
+}
+
+export type ListingBoard = "rebny_rls" | "trreb";
+
+export async function getListingConnection() {
+  const db = await ready();
+  const workspaceId = ws();
+  const [row] = await db
+    .select()
+    .from(listingConnections)
+    .where(eq(listingConnections.workspaceId, workspaceId))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function setListingConnection(input: {
+  board: ListingBoard;
+  memberConfirmed: boolean;
+  agreementConfirmed: boolean;
+}) {
+  const db = await ready();
+  const workspaceId = ws();
+  await db
+    .insert(listingConnections)
+    .values({ workspaceId, ...input })
+    .onConflictDoUpdate({
+      target: listingConnections.workspaceId,
+      set: { ...input, updatedAt: sql`CURRENT_TIMESTAMP` },
+    });
+  await appendAudit(db, {
+    actor: "user",
+    action: "configure_listing_connection",
+    entityType: "listing_connection",
+    entityId: workspaceId,
+    detail: `${input.board}; member=${input.memberConfirmed}; agreement=${input.agreementConfirmed}`,
+  });
+  return getListingConnection();
+}
+
+export async function deleteListingConnection() {
+  const db = await ready();
+  const workspaceId = ws();
+  await db.delete(listingConnections).where(eq(listingConnections.workspaceId, workspaceId));
+  await appendAudit(db, {
+    actor: "user",
+    action: "disconnect_listing_board",
+    entityType: "listing_connection",
+    entityId: workspaceId,
+    detail: "",
+  });
+  return { disconnected: true };
 }
 
 // Persist newly imported/analyzed leads as real property workspaces (scoped to the

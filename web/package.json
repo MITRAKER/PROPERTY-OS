@@ -10,7 +10,7 @@
     "build": "vinext build",
     "start": "vinext start",
     "test": "npm run test:unit && npm run build && node --test tests/rendered-html.test.mjs",
-    "test:unit": "node --test tests/briefing.test.mjs tests/extraction.test.mjs tests/agents.test.mjs tests/property-data.test.mjs tests/insights.test.mjs tests/scoring.test.mjs tests/prospecting.test.mjs tests/notifications.test.mjs tests/owner-mailing.test.mjs tests/contacts.test.mjs tests/xlsx.test.mjs",
+    "test:unit": "node --test tests/briefing.test.mjs tests/extraction.test.mjs tests/agents.test.mjs tests/property-data.test.mjs tests/insights.test.mjs tests/scoring.test.mjs tests/prospecting.test.mjs tests/notifications.test.mjs tests/owner-mailing.test.mjs tests/contacts.test.mjs tests/xlsx.test.mjs tests/listings.test.mjs tests/repository-safety.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },

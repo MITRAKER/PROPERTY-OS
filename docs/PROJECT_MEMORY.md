@@ -1,6 +1,6 @@
 # Property OS — Canonical Project Memory
 
-Last updated: July 20, 2026
+Last updated: July 24, 2026
 
 This file preserves the product and engineering context accumulated during planning and implementation. It is the source of truth for teammates and future coding agents. Update it whenever a material decision changes.
 
@@ -76,7 +76,7 @@ The demo lands when a user imports the provided messy CSV and immediately receiv
 
 The unconventional concept is a “Radio DJ for Real Estate”: a hands-free, personalized morning audio show that narrates the priority queue, pauses to offer an approved call, collects a spoken post-call note, updates the property timeline, and continues to the next property.
 
-This is intentionally not the first MVP. The current app uses browser text-to-speech only. Streaming voice orchestration, speech-to-text, call bridging, and mid-call state management are future work.
+This is intentionally not the first MVP. The current app uses browser text-to-speech for briefing playback and the browser Speech Recognition API for command-bar voice input where the browser supports it. Streaming voice orchestration, reliable cross-browser transcription, call bridging, and mid-call state management are future work.
 
 ## 6. Current implementation
 
@@ -84,7 +84,7 @@ The runnable application lives in `web/`.
 
 ### Implemented product views
 
-- **Morning Briefing:** KPIs, top-priority properties, neighborhood pulse, tasks, CSV import, audio playback, an **Ask Property OS orchestrator command bar**, and an **agent-activity (model-run) panel**.
+- **Morning Briefing:** Coverflow-style property cards, KPIs, top-priority properties, neighborhood pulse, tasks, flexible CSV/modern Excel (`.xlsx`) import, audio playback, an **Ask Property OS orchestrator command bar**, and an **agent-activity (model-run) panel**.
 - **Properties:** Search, signal/status filters, opportunity scores, and next actions — now backed by the database.
 - **Property Workspace:** Property facts (real BBL/assessed value/year built once enriched), evidence-backed summary, active signals, a **persisted timeline**, persisted notes, an audited “mark called” action, an **“Enrich from NYC records”** action that pulls and stores live public records, and an editable **contact-permissions** panel that drives the compliance gate.
 - **Map Intelligence:** A **real Leaflet/OpenStreetMap tile map** with properties plotted at their true coordinates. **Click any block to prospect it** — Property OS pulls the real tax lots there from NYC PLUTO, scores them as leads with stated reasons, and "Add as lead" turns one into a real property workspace. The neighborhood panel is computed from the workspace, not hardcoded.
@@ -109,7 +109,7 @@ The runnable application lives in `web/`.
 
 ### Real working P0 path (now persistent + orchestrated)
 
-1. The user uploads a CSV or chooses `web/public/messy-leads.csv`.
+1. The user uploads a CSV or modern Excel (`.xlsx`) lead file. The app starts empty; `web/tests/fixtures/messy-leads.csv` is available for an intentional demo import but is never served or seeded.
 2. `POST /api/briefing` validates the request and runs the **Follow-Up Agent** (Claude Haiku 4.5 when a key is present, deterministic local model otherwise).
 3. The deterministic TypeScript layer validates dates and evidence, enforces do-not-contact rules, and ranks leads.
 4. Imported leads are **persisted as real property workspaces** (upserted by address), the model run is logged, and the UI shows the evidence-backed priority queue.
@@ -121,14 +121,26 @@ The runnable application lives in `web/`.
 ```mermaid
 flowchart LR
     U["Agent in browser"] --> UI["Next.js / React workspace"]
-    UI --> API["POST /api/briefing"]
-    API --> CSV["CSV validation and parsing"]
-    CSV --> LLM["Claude structured extraction"]
-    CSV --> FB["Local extraction fallback"]
-    LLM --> RULES["Deterministic safeguards and ranking"]
-    FB --> RULES
-    RULES --> UI
-    UI --> TTS["Browser SpeechSynthesis"]
+    UI --> AUTH["Signed session + withAuth"]
+    AUTH --> API["Workspace-scoped API routes"]
+    API <--> D1["Cloudflare D1 via Drizzle"]
+
+    API --> B["Briefing import"]
+    B --> F["Follow-Up Agent"]
+    F --> RULES["Validated extraction + deterministic safeguards and ranking"]
+    RULES --> D1
+
+    API --> O["Deterministic Orchestrator"]
+    O --> PI["Property Intelligence Agent"]
+    O --> OC["Outreach & Compliance Agent"]
+    PI --> DP["PropertyDataProvider"]
+    DP --> WS["Workspace records"]
+    DP --> NYC["Official NYC APIs"]
+    OC --> AP["Pending human approval"]
+    AP --> GATE["Send-time compliance gate"]
+    GATE --> SEND["Resend email / Twilio SMS / printable letter"]
+
+    UI --> VOICE["Browser speech output + optional command input"]
 ```
 
 ### Frontend and runtime
@@ -143,14 +155,14 @@ flowchart LR
 
 - **Sign-in:** Google OAuth 2.0 authorization-code flow (`web/lib/auth/google.ts`, routes under `web/app/api/auth/`). Sessions are stateless, signed cookies (HMAC-SHA256, `web/lib/auth/session.ts`) using `SESSION_SECRET`.
 - **Dev fallback:** when `GOOGLE_CLIENT_ID` is unset, the app auto-provisions a "Local Developer" user + "Local workspace" so local development needs no login. `/api/me` reports `needsLogin` so the frontend shows a Google sign-in screen only in production.
-- **Multi-tenancy:** `users`, `workspaces`, `workspace_members` tables; every data table carries `workspace_id`. A request's identity + workspace is put in an `AsyncLocalStorage` context (`web/lib/auth/context.ts`) by the `withAuth` gate, and `web/db/repo.ts` scopes **every** query to `currentWorkspaceId()`. Seeded/imported ids are namespaced per workspace (`<workspaceId>::<id>`) so tenants never collide. Cross-workspace isolation is verified.
+- **Multi-tenancy:** `users`, `workspaces`, `workspace_members` tables; every data table carries `workspace_id`. A request's identity + workspace is put in an `AsyncLocalStorage` context (`web/lib/auth/context.ts`) by the `withAuth` gate, and repository operations are designed to scope queries to `currentWorkspaceId()`. Seeded/imported ids are namespaced per workspace (`<workspaceId>::<id>`). A July 24 audit found two internal contact re-reads that still need an explicit workspace predicate; see Section 19.
 - Every data API route is wrapped in `withAuth`; unauthenticated requests get 401 in production (dev fallback locally). `/api/config` is the only unauthenticated data-adjacent route (non-secret runtime flags only).
 
 ### Persistence
 
 - **Cloudflare D1 (SQLite)** accessed through **Drizzle ORM** (`web/db/schema.ts`, `web/db/repo.ts`).
 - The binding is reached via `import { env } from "cloudflare:workers"` (`web/db/index.ts`), loaded through a dynamic import so non-worker tooling (the Node server-render test) can still load the bundle.
-- Tables: `properties`, `people`, `property_people`, `signals`, `timeline_events`, `tasks`, `contact_permissions`, `model_runs`, `approvals`, `audit_log`.
+- Tables (18): `users`, `workspaces`, `workspace_members`, `properties`, `people`, `property_people`, `signals`, `timeline_events`, `tasks`, `contact_permissions`, `model_runs`, `approvals`, `contacts`, `suppressions`, `documents`, `offers`, `saved_neighborhoods`, and `audit_log`.
 - Locally there is no migration runner, so `repo.ts` creates tables with idempotent `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE` on first use. No demo/sample data is ever seeded — workspaces start empty. `drizzle-kit generate` still produces migrations for the deploy path.
 - API routes are the only DB consumers; agent logic is pure and DB-free so it stays unit-testable.
 
@@ -175,7 +187,7 @@ The Property Intelligence Agent analyzes a normalized `PropertyContext` (`web/li
 - **Structured output:** JSON schema through the Anthropic SDK
 - **Ranking and safeguards:** deterministic TypeScript
 - **Audio output:** browser Web Speech API / `SpeechSynthesis`
-- **Speech input:** not implemented
+- **Speech input:** browser `SpeechRecognition` / `webkitSpeechRecognition` for orchestrator commands when available; browser support varies and this is not a production voice-agent pipeline
 
 ### Why this stack was chosen
 
@@ -243,28 +255,32 @@ flowchart TD
 - `property-intelligence.ts` — interprets property records into source-backed signals + priority (deterministic ranking still owns the final score). Its `analyzePropertyContext()` reads a normalized `PropertyContext` from a data provider and never fetches, scrapes, or invents — every signal cites its evidence and source.
 - `outreach-compliance.ts` + `compliance.ts` — runs deterministic compliance tools (do-not-contact, channel permission, protected-attribute, existing-relationship) first, drafts only when allowed, and never sends. Every draft is stored as a `pending` approval.
 
-Each agent has a deterministic local fallback so the product works with no Anthropic key. Every agent/model call is logged to `model_runs`; every consequential write is logged to `audit_log`. This is the MVP version of the design; live public-record tools and the parallel research/outreach sequencing remain future work.
+Each agent has a deterministic local fallback so the product works with no Anthropic key. Every agent/model call is logged to `model_runs`; every consequential write is logged to `audit_log`. This is the MVP version of the design. Official NYC public-record tools are live through the provider layer. More advanced parallel research/outreach sequencing, LLM-planned routing, budgets, and durable retries remain future work.
 
-## 9. Data model direction
+## 9. Current data model
 
-The central object is a property workspace.
+The live D1 schema is property-centered and workspace-scoped.
 
 ```text
-Property
-  id / BBL / address
-  owner relationships
-  property facts
-  opportunity signals
-  timeline events
-  notes and transcripts
-  tasks and follow-ups
-  contact permissions
-  documents and media
-  AI summaries
-  scoring history
+Workspace
+  members -> users
+  properties
+    property_people -> people
+    signals
+    timeline_events
+    tasks
+    contact_permissions
+    contacts
+    documents
+    offers
+  approvals
+  suppressions
+  saved_neighborhoods
+  model_runs
+  audit_log
 ```
 
-Future tables should likely include `properties`, `people`, `property_people`, `timeline_events`, `signals`, `tasks`, `contact_permissions`, `documents`, `model_runs`, and `approvals`. Do not collapse a property and owner into one record; ownership can change, and one person can relate to multiple properties.
+`properties` stores the address, BBL, coordinates, basic public facts, working status, notes, and score inputs. Relationships remain normalized through `people` and `property_people`; do not collapse a property and owner into one record because ownership can change and one person can relate to multiple properties. Every new data table must carry `workspace_id`, be filtered by the signed-session workspace, and be mirrored in both `web/db/schema.ts` and the bootstrap DDL in `web/db/repo.ts`.
 
 ## 10. Safety and compliance requirements
 
@@ -282,7 +298,7 @@ These are product requirements, not optional polish:
 ## 11. Test and evaluation assets
 
 - `web/tests/fixtures/messy-leads.csv`: 20 intentionally messy lead notes, used only as a test benchmark (not served or seeded).
-- `web/data/messy-leads-expected.json`: human labels used to evaluate extraction.
+- `web/tests/fixtures/messy-leads-expected.json`: human labels used to evaluate extraction.
 - `web/tests/briefing.test.mjs`: CSV validation, ranking, and evidence behavior.
 - `web/tests/extraction.test.mjs`: local benchmark, Claude structured-output path, cost metrics, and deterministic do-not-contact override.
 - `web/tests/agents.test.mjs`: orchestrator intent routing, compliance tools (do-not-contact / channel / protected-attribute blocks), orchestrator ranking without sending, outreach held for approval, do-not-contact block, and the property-intelligence / follow-up local fallbacks.
@@ -296,15 +312,17 @@ npm run lint
 npm test
 ```
 
-At the July 20, 2026 checkpoint (after the persistence + four-agent milestone), lint passed and all automated tests passed: 14 unit tests plus the production build and server-render smoke test. Persistence, the orchestrator, the compliance gate, and approvals were verified end-to-end against the running app (including survival across a server restart).
+At the July 24, 2026 audit checkpoint, `npm run lint` passed, all 72 unit tests passed, the production Vinext build completed, and the server-render smoke test passed. The suite covers extraction, flexible imports, XLSX parsing, agents, deterministic compliance, quiet hours, suppression, CAN-SPAM footer generation, scoring, prospecting, property-data mapping, owner mailing, contacts, notifications/calendar/letters, and rendered output.
 
 ## 12. Repository and deployment memory
 
 - GitHub: `https://github.com/MITRAKER/PROPERTY-OS`
 - Main frontend branch: `Frontend`
-- Current frontend milestone commit: `4b11558` (`feat: build Property OS frontend workspace`)
-- Private preview: `https://property-os-briefing.jackson1stamericanpr.chatgpt.site`
+- Audited frontend HEAD on July 24, 2026: `26ef04b` (`chore: remove locally-installed agent tooling`)
+- Production Worker: `https://property-os-morning-briefing.property-os.workers.dev`
+- Legacy/private Sites preview: `https://property-os-briefing.jackson1stamericanpr.chatgpt.site` (do not assume this preview matches the current Worker build)
 - Hosting project ID is stored in `web/.openai/hosting.json`; treat it as opaque.
+- `.github/workflows/deploy.yml` tests and deploys pushes to `Frontend` or `main` using the configured D1 database.
 
 Untracked research documents in the repository root may belong to the user. Do not stage, overwrite, move, or delete them unless explicitly requested.
 
@@ -351,13 +369,15 @@ web/lib/data/workspace-provider.ts     Workspace records -> PropertyContext (def
 web/lib/data/nyc-provider.ts           Live NYC GeoSearch + PLUTO + HPD provider
 web/lib/data/provider.ts               createPropertyDataProvider(source) factory
 web/lib/briefing.ts                    CSV parsing, validation, ranking, import mapping
+web/lib/xlsx.ts                        Dependency-free modern XLSX (ZIP/XML) reader
 web/lib/extraction.ts                  Claude/local extraction and metrics
 web/lib/property-model.ts              Shared property/task types (sample arrays are test-only)
-web/public/messy-leads.csv              Demo import fixture
-web/data/messy-leads-expected.json     Human-labeled benchmark
+web/tests/fixtures/messy-leads.csv     Test/demo import fixture (not served or seeded)
+web/tests/fixtures/messy-leads-expected.json Human-labeled benchmark
 web/tests/                             Automated verification (briefing, extraction, agents, render)
 web/.env.example                       Safe environment-variable template
 web/.openai/hosting.json               Sites deployment binding (d1 = "DB")
+.github/workflows/deploy.yml           Test/build/deploy pipeline for Frontend and main
 ```
 
 ## 14. What this product is not
@@ -366,7 +386,7 @@ web/.openai/hosting.json               Sites deployment binding (d1 = "DB")
 - Not a generic AI chatbot
 - Not only a dialer
 - Not an autonomous outreach bot
-- Not a live public-record database yet
+- Not a full title plant, MLS, valuation service, people-search database, or mirrored public-record warehouse; it performs targeted lookups against official NYC sources
 - Not the same as an inbound AI sales agent for Colombian pre-construction projects
 
 The classmate’s pre-construction agent focuses on qualifying and converting buyers for a developer’s inventory. Property OS focuses on property-centered intelligence, seller-opportunity prioritization, and relationship workflow for existing properties.
@@ -384,12 +404,12 @@ The classmate’s pre-construction agent focuses on qualifying and converting bu
 
 ### P1 — Make the workspace persistent (largely shipped)
 
-- Add authentication and team/workspace boundaries — **done: Google OAuth sign-in + signed session cookies, and full multi-tenant workspace isolation (every table carries `workspace_id`, every query is scoped, ids are namespaced per workspace). A local dev fallback user runs when Google is unconfigured.**
+- Add authentication and team/workspace boundaries — **mostly done: Google OAuth sign-in + signed session cookies, `workspace_id` on every data table, and repository scoping through request context. A local dev fallback user runs when Google is unconfigured. Two contact re-reads still need explicit workspace predicates (Section 19).**
 - Add a relational database — **done (Cloudflare D1 + Drizzle)**
 - Persist properties, relationships, notes, tasks, and timelines — **done**
 - Replace simulated actions with audited application commands — **done (`audit_log` + `mark_called`, task toggles, notes, approvals)**
 - Add property deduplication and address normalization — **partial (import upserts by address; normalization still basic)**
-- Add CSV import mapping and error correction UI — **partial: rejected rows are surfaced after import; column remapping is still open**
+- Add flexible CSV/Excel import and error correction UI — **partial: header inference, headerless CSV, modern `.xlsx`, and rejected-row surfacing are implemented; manual column remapping and legacy binary `.xls` remain open**
 
 ### P2 — Real property intelligence (started)
 
@@ -402,19 +422,19 @@ The classmate’s pre-construction agent focuses on qualifying and converting bu
 
 ### P3 — Orchestrated agents (MVP shipped)
 
-- Property Intelligence Agent — **done (MVP; interprets held records, not live public data)**
+- Property Intelligence Agent — **done (MVP; analyzes normalized workspace or live NYC public-record context through a provider)**
 - Follow-Up Agent — **done**
 - Orchestrator Agent — **done (deterministic intent routing)**
-- Outreach and Compliance Agent — **done (compliance gate + drafts, never sends)**
+- Outreach and Compliance Agent — **done (compliance gate + drafts; delivery can occur only after explicit human approval and a second send-time gate)**
 - Approval inbox and trace review — **done (`Approvals` view + agent-activity panel + audit log)**
-- Budgets, retries, failure handling, live property-data tools, and LLM-planned routing — **still open**
+- Budgets, durable retries, richer failure handling, additional approved data providers, and LLM-planned routing — **still open**
 
 ### P4 — Voice and workflow expansion
 
-- Speech-to-text notes
+- Reliable speech-to-text notes beyond the current browser-only command input
 - Interactive morning radio briefing
 - Call/dialer integration with explicit approval
-- Email, text, and direct-mail drafts with permission checks
+- Richer email, text, and direct-mail workflows beyond the current approval-gated delivery/print path
 - Calendar and CRM integrations
 
 ## 16. Decision log
@@ -438,7 +458,7 @@ The classmate’s pre-construction agent focuses on qualifying and converting bu
 - **Delivery is real but never autonomous:** outreach genuinely sends (Resend/Twilio), but only after a human approves, and the compliance gate re-runs at send time. Automated voice dialing is deliberately not implemented — it is the most regulated channel (TCPA / do-not-call) and a person places the call.
 - **Map-click prospecting selected as the "next lead" engine:** rather than buying lead lists, an agent clicks a block and Property OS ranks the real parcels there from public records, with the reason for every point. Contact details still have to come from the CRM or an authorized provider.
 - **Google OAuth + workspace tenancy selected:** the product is intended to be a real, deployed SaaS holding real agents' private CRM data, so sign-in (Google) and per-workspace data isolation are required, not optional. Chosen over ChatGPT-platform auth to keep it deployable as a standalone app.
-- **Repository owns tenant scoping:** every query is scoped by an `AsyncLocalStorage` workspace context rather than trusting callers, so a missed filter can't silently leak another tenant's data.
+- **Repository owns tenant scoping:** queries must be scoped by an `AsyncLocalStorage` workspace context rather than trusting callers. This remains a hard rule; the July 24 audit found two internal contact re-reads that need to be brought into full compliance.
 
 ## 17. Next-session checklist
 
@@ -478,4 +498,26 @@ Before implementing the next feature:
   controls above are built, but real-outreach go-live still gates on a signed
   vendor data contract, National DNC registration, and an attorney consult —
   which a local/demo build does not need.
-- **Test count:** 64 unit tests + production build + server-render, all green.
+- **Test count:** 72 unit tests + production build + one server-render smoke test, all green on July 24, 2026.
+
+## 19. July 24, 2026 Claude-build audit
+
+This checkpoint records what was verified directly from the repository and running deployment after Claude's build, rather than copying implementation claims into memory.
+
+### Verified state
+
+- Branch `Frontend` was clean for tracked files at audited HEAD `26ef04b` before this memory update. The recent implementation sequence includes the production-ready app, real D1 deployment configuration, accessibility/SEO polish, Excel import, the coverflow dashboard, CI deployment, and removal of local-only agent tooling.
+- The production Worker root returned HTTP 200. `GET /api/health/db` also returned HTTP 200 with `{"ok":true,"propertyCount":0,"sample":[]}`, confirming that the Worker can reach D1 and that the current production workspace is intentionally empty.
+- `npm run lint` passed.
+- `npm test` passed: 72 unit tests, a successful production Vinext build, and one server-render smoke test.
+- The four agent roles are implemented. The Orchestrator uses deterministic intent routing; the specialist agents use Claude when configured and labeled deterministic fallbacks otherwise. Agents remain database-free.
+- Official NYC lookups, property enrichment, Leaflet/OSM mapping, map prospecting, D1 persistence, Google OAuth/session support, human approvals, Resend email, Twilio SMS, print-ready letters, contact-provider integration, browser notifications, calendar export, and browser speech input/output are present in code.
+- The app starts empty and does not pretend test fixtures are live data. The messy-leads files live under `web/tests/fixtures/`.
+
+### Known gaps to fix next
+
+1. **Cold-SMS database default:** `DEFAULT_PERMISSION.textAllowed` is safely `false`, but `contact_permissions.text_allowed` still defaults to `true` in both `web/db/schema.ts` and the bootstrap DDL in `web/db/repo.ts`. New persisted permissions can therefore contradict the intended cold-SMS-safe default. Align both schema definitions and add a database-level regression test before real SMS use.
+2. **Two contact re-reads need explicit tenant scope:** two internal reads in `web/db/repo.ts` fetch a contact by globally generated ID after an already-scoped lookup/insert but omit `workspace_id` in those re-read predicates. The UUID design makes accidental collision unlikely, but this violates the repository's strict tenant-scoping rule and should be corrected and tested.
+3. **Legacy `.xls` is not supported:** the file picker advertises `.xls`, while `web/lib/xlsx.ts` is a ZIP/XML reader for modern `.xlsx`. Remove `.xls` from the accepted types or add a real legacy parser; do not claim both formats work.
+
+These gaps were documented, not silently fixed, because this task was a project audit and memory refresh. They are the first engineering follow-ups for the next implementation session.

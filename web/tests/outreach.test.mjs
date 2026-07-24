@@ -51,11 +51,13 @@ test("blocks do-not-contact records and returns no message", () => {
         { name: "do_not_contact", passed: false, detail: "The record is marked do not contact." },
         { name: "channel_permission", passed: false, detail: "No documented permission for phone outreach." },
         { name: "consent", passed: true, detail: "No documented consent withdrawal on file." },
-        { name: "quiet_hours", passed: true, detail: "Within permitted contact hours (8am–9pm America/New_York)." },
+        { name: "quiet_hours", passed: true, detail: "Within permitted contact hours (8:00–21:00 America/New_York)." },
+        { name: "national_dnc_registry", passed: false, detail: "This contact has not been confirmed scrubbed against the National Do Not Call Registry." },
         { name: "protected_attribute_usage", passed: true, detail: "No protected attributes were used as a signal." },
         { name: "existing_relationship", passed: true, detail: "A prior relationship is on record with this owner." },
       ],
     },
+    suggestedChannel: null,
   });
 });
 
@@ -125,20 +127,84 @@ test("blocks a phone call outside 8am-9pm Eastern, but never blocks email/letter
   const insideHours = new Date("2026-07-22T14:00:00Z"); // 10am ET
 
   const blocked = prepareOutreach(
-    { ...baseRequest, channel: "phone", permissions: { doNotContact: false, phoneAllowed: true } },
+    { ...baseRequest, channel: "phone", permissions: { doNotContact: false, phoneAllowed: true, nationalDncChecked: true } },
     outsideHours,
   );
   assert.equal(blocked.allowed, false);
   assert.match(blocked.complianceWarnings[0], /Outside permitted contact hours/);
 
   const allowed = prepareOutreach(
-    { ...baseRequest, channel: "phone", permissions: { doNotContact: false, phoneAllowed: true } },
+    { ...baseRequest, channel: "phone", permissions: { doNotContact: false, phoneAllowed: true, nationalDncChecked: true } },
     insideHours,
   );
   assert.equal(allowed.allowed, true);
 
   const emailAtNight = prepareOutreach(baseRequest, outsideHours);
   assert.equal(emailAtNight.allowed, true);
+});
+
+test("a jurisdiction override changes the quiet-hours window used for the check", () => {
+  const at7am = new Date("2026-07-22T11:00:00Z"); // 7am ET — blocked under the federal 8am-9pm default
+
+  const blockedByDefault = prepareOutreach(
+    { ...baseRequest, channel: "phone", permissions: { doNotContact: false, phoneAllowed: true, nationalDncChecked: true } },
+    at7am,
+  );
+  assert.equal(blockedByDefault.allowed, false);
+
+  const allowedWithOverride = prepareOutreach(
+    {
+      ...baseRequest,
+      channel: "phone",
+      permissions: { doNotContact: false, phoneAllowed: true, nationalDncChecked: true },
+      jurisdiction: { quietHoursStart: 7, quietHoursEnd: 21, timeZone: "America/New_York" },
+    },
+    at7am,
+  );
+  assert.equal(allowedWithOverride.allowed, true);
+});
+
+test("blocks phone/text until the contact is confirmed scrubbed against the National DNC Registry", () => {
+  const insideHours = new Date("2026-07-22T14:00:00Z");
+  const result = prepareOutreach(
+    { ...baseRequest, channel: "phone", permissions: { doNotContact: false, phoneAllowed: true } },
+    insideHours,
+  );
+
+  assert.equal(result.allowed, false);
+  assert.match(result.complianceWarnings[0], /National Do Not Call Registry/);
+
+  const checked = prepareOutreach(
+    { ...baseRequest, channel: "phone", permissions: { doNotContact: false, phoneAllowed: true, nationalDncChecked: true } },
+    insideHours,
+  );
+  assert.equal(checked.allowed, true);
+
+  // Email/letter never require the National DNC scrub.
+  const emailResult = prepareOutreach(baseRequest, insideHours);
+  assert.equal(emailResult.allowed, true);
+});
+
+test("suggests an allowed channel when the requested one is blocked for a channel-specific reason", () => {
+  const outsideHours = new Date("2026-07-22T03:00:00Z"); // 11pm ET
+  const result = prepareOutreach(
+    { ...baseRequest, channel: "phone", permissions: { doNotContact: false, phoneAllowed: true, nationalDncChecked: true, emailAllowed: true } },
+    outsideHours,
+  );
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.suggestedChannel, "email");
+});
+
+test("never suggests a fallback channel when the whole record is blocked", () => {
+  const result = prepareOutreach({
+    ...baseRequest,
+    channel: "phone",
+    permissions: { doNotContact: true, emailAllowed: true },
+  });
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.suggestedChannel, null);
 });
 
 test("blocks outreach when the supplied evidence references a protected attribute", () => {

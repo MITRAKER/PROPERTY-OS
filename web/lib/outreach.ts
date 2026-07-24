@@ -22,6 +22,19 @@ export type Permissions = {
   textAllowed?: boolean;
   letterAllowed?: boolean;
   consentOnFile?: boolean;
+  // Whether this contact has been scrubbed against the National Do Not Call
+  // Registry (a paid, FTC-subscriber-only lookup we don't call directly).
+  // Required for phone/text; defaults to unverified (blocked) if omitted.
+  nationalDncChecked?: boolean;
+};
+
+// Lets a caller override the default federal quiet-hours window per request
+// (e.g. keyed off the property's state), without hardcoding specific state
+// laws here — those should come from the client's own legal/compliance review.
+export type Jurisdiction = {
+  timeZone?: string;
+  quietHoursStart?: number;
+  quietHoursEnd?: number;
 };
 
 export type OutreachRequest = {
@@ -30,6 +43,7 @@ export type OutreachRequest = {
   propertyContext: PropertyContext;
   relationshipContext: RelationshipContext;
   permissions: Permissions;
+  jurisdiction?: Jurisdiction;
 };
 
 // A permanent, exportable audit record: every check that ran, whether it
@@ -59,12 +73,17 @@ export type OutreachResult = {
   complianceWarnings: string[];
   evidenceUsed: string[];
   complianceReceipt: ComplianceReceipt;
+  // Populated only when blocked for a channel- or time-specific reason (not
+  // do-not-contact/consent/protected-attribute, which block every channel) and
+  // another channel is actually permitted right now.
+  suggestedChannel: Channel | null;
 };
 
 type ComplianceCheck = {
   allowed: boolean;
   approvalRequired: boolean;
   warnings: string[];
+  failedCheck?: string;
 };
 
 // Letters carry a lower regulatory bar than TCPA-covered phone/text or CAN-SPAM email,
@@ -161,18 +180,36 @@ function checkConsentRule(channel: Channel, permissions: Permissions): Complianc
   };
 }
 
-function checkQuietHoursRule(channel: Channel, now: Date): ComplianceCheckRecord {
+function checkQuietHoursRule(channel: Channel, now: Date, jurisdiction?: Jurisdiction): ComplianceCheckRecord {
   if (!TIME_RESTRICTED_CHANNELS.includes(channel)) {
     return { name: "quiet_hours", passed: true, detail: "Quiet-hours rule does not apply to this channel." };
   }
-  const hour = hourInTimeZone(now, DEFAULT_TIME_ZONE);
-  const passed = hour >= QUIET_HOURS.startHour && hour < QUIET_HOURS.endHour;
+  const timeZone = jurisdiction?.timeZone ?? DEFAULT_TIME_ZONE;
+  const startHour = jurisdiction?.quietHoursStart ?? QUIET_HOURS.startHour;
+  const endHour = jurisdiction?.quietHoursEnd ?? QUIET_HOURS.endHour;
+  const hour = hourInTimeZone(now, timeZone);
+  const passed = hour >= startHour && hour < endHour;
+  const window = `${startHour}:00–${endHour}:00 ${timeZone}`;
   return {
     name: "quiet_hours",
     passed,
     detail: passed
-      ? `Within permitted contact hours (8am–9pm ${DEFAULT_TIME_ZONE}).`
-      : `Outside permitted contact hours (8am–9pm ${DEFAULT_TIME_ZONE}); ${channel} outreach is blocked right now.`,
+      ? `Within permitted contact hours (${window}).`
+      : `Outside permitted contact hours (${window}); ${channel} outreach is blocked right now.`,
+  };
+}
+
+function checkNationalDncRule(channel: Channel, permissions: Permissions): ComplianceCheckRecord {
+  if (!TIME_RESTRICTED_CHANNELS.includes(channel)) {
+    return { name: "national_dnc_registry", passed: true, detail: "National DNC Registry scrub does not apply to this channel." };
+  }
+  const passed = permissions.nationalDncChecked === true;
+  return {
+    name: "national_dnc_registry",
+    passed,
+    detail: passed
+      ? "This contact has been scrubbed against the National Do Not Call Registry."
+      : "This contact has not been confirmed scrubbed against the National Do Not Call Registry.",
   };
 }
 
@@ -200,7 +237,7 @@ function checkExistingRelationshipRule(relationshipContext: RelationshipContext)
 }
 
 export function buildComplianceReceipt(request: OutreachRequest, now: Date = new Date()): ComplianceReceipt {
-  const { propertyId, channel, permissions, propertyContext, relationshipContext } = request;
+  const { propertyId, channel, permissions, propertyContext, relationshipContext, jurisdiction } = request;
   return {
     checkedAt: now.toISOString(),
     propertyId,
@@ -209,30 +246,67 @@ export function buildComplianceReceipt(request: OutreachRequest, now: Date = new
       checkDoNotContactRule(permissions),
       checkChannelPermissionRule(channel, permissions),
       checkConsentRule(channel, permissions),
-      checkQuietHoursRule(channel, now),
+      checkQuietHoursRule(channel, now, jurisdiction),
+      checkNationalDncRule(channel, permissions),
       checkProtectedAttributeRule(propertyContext, relationshipContext),
       checkExistingRelationshipRule(relationshipContext),
     ],
   };
 }
 
+// Channels tried, in order, when suggesting an alternative to a blocked one.
+// Email/letter first since neither is time-restricted, making them the
+// safest universal fallback.
+const CHANNEL_FALLBACK_ORDER: Channel[] = ["email", "letter", "phone", "text"];
+
+// Only these failures are channel- or time-specific; do-not-contact, consent,
+// and protected-attribute apply to the whole record, so no other channel would
+// help and no suggestion should be offered.
+const CHANNEL_SPECIFIC_FAILURES = new Set(["channel_permission", "quiet_hours", "national_dnc_registry"]);
+
+function suggestAlternateChannel(request: OutreachRequest, now: Date): Channel | null {
+  for (const candidate of CHANNEL_FALLBACK_ORDER) {
+    if (candidate === request.channel) continue;
+    const channelOk = checkChannelPermissionRule(candidate, request.permissions).passed;
+    const quietOk = checkQuietHoursRule(candidate, now, request.jurisdiction).passed;
+    const dncOk = checkNationalDncRule(candidate, request.permissions).passed;
+    if (channelOk && quietOk && dncOk) return candidate;
+  }
+  return null;
+}
+
 export function checkCompliance(request: OutreachRequest, now: Date = new Date()): ComplianceCheck {
-  const { channel, permissions, relationshipContext } = request;
+  const { channel, permissions, relationshipContext, jurisdiction } = request;
 
   const doNotContact = checkDoNotContactRule(permissions);
-  if (!doNotContact.passed) return { allowed: false, approvalRequired: false, warnings: [doNotContact.detail] };
+  if (!doNotContact.passed) {
+    return { allowed: false, approvalRequired: false, warnings: [doNotContact.detail], failedCheck: doNotContact.name };
+  }
 
   const channelPermission = checkChannelPermissionRule(channel, permissions);
-  if (!channelPermission.passed) return { allowed: false, approvalRequired: false, warnings: [channelPermission.detail] };
+  if (!channelPermission.passed) {
+    return { allowed: false, approvalRequired: false, warnings: [channelPermission.detail], failedCheck: channelPermission.name };
+  }
 
   const consent = checkConsentRule(channel, permissions);
-  if (!consent.passed) return { allowed: false, approvalRequired: false, warnings: [consent.detail] };
+  if (!consent.passed) {
+    return { allowed: false, approvalRequired: false, warnings: [consent.detail], failedCheck: consent.name };
+  }
 
-  const quietHours = checkQuietHoursRule(channel, now);
-  if (!quietHours.passed) return { allowed: false, approvalRequired: false, warnings: [quietHours.detail] };
+  const quietHours = checkQuietHoursRule(channel, now, jurisdiction);
+  if (!quietHours.passed) {
+    return { allowed: false, approvalRequired: false, warnings: [quietHours.detail], failedCheck: quietHours.name };
+  }
+
+  const nationalDnc = checkNationalDncRule(channel, permissions);
+  if (!nationalDnc.passed) {
+    return { allowed: false, approvalRequired: false, warnings: [nationalDnc.detail], failedCheck: nationalDnc.name };
+  }
 
   const protectedAttribute = checkProtectedAttributeRule(request.propertyContext, relationshipContext);
-  if (!protectedAttribute.passed) return { allowed: false, approvalRequired: false, warnings: [protectedAttribute.detail] };
+  if (!protectedAttribute.passed) {
+    return { allowed: false, approvalRequired: false, warnings: [protectedAttribute.detail], failedCheck: protectedAttribute.name };
+  }
 
   const warnings: string[] = [];
   if (!hasRelationshipHistory(relationshipContext)) {
@@ -346,7 +420,11 @@ export function draftMessage(
   }
 }
 
-function blockedResult(request: OutreachRequest, warnings: string[], now: Date): OutreachResult {
+function blockedResult(request: OutreachRequest, compliance: ComplianceCheck, now: Date): OutreachResult {
+  const suggestedChannel = compliance.failedCheck && CHANNEL_SPECIFIC_FAILURES.has(compliance.failedCheck)
+    ? suggestAlternateChannel(request, now)
+    : null;
+
   return {
     propertyId: request.propertyId,
     channel: request.channel,
@@ -354,15 +432,16 @@ function blockedResult(request: OutreachRequest, warnings: string[], now: Date):
     approvalRequired: false,
     subject: null,
     message: null,
-    complianceWarnings: warnings,
+    complianceWarnings: compliance.warnings,
     evidenceUsed: [],
     complianceReceipt: buildComplianceReceipt(request, now),
+    suggestedChannel,
   };
 }
 
 export function prepareOutreach(request: OutreachRequest, now: Date = new Date()): OutreachResult {
   const compliance = checkCompliance(request, now);
-  if (!compliance.allowed) return blockedResult(request, compliance.warnings, now);
+  if (!compliance.allowed) return blockedResult(request, compliance, now);
 
   const draft = draftMessage(request.channel, request.propertyContext, request.relationshipContext);
 
@@ -376,6 +455,7 @@ export function prepareOutreach(request: OutreachRequest, now: Date = new Date()
     complianceWarnings: compliance.warnings,
     evidenceUsed: draft.evidenceUsed,
     complianceReceipt: buildComplianceReceipt(request, now),
+    suggestedChannel: null,
   };
 }
 
@@ -472,7 +552,7 @@ export async function prepareOutreachWithAnthropic(
 ): Promise<OutreachResult> {
   const now = options.now ?? new Date();
   const compliance = checkCompliance(request, now);
-  if (!compliance.allowed) return blockedResult(request, compliance.warnings, now);
+  if (!compliance.allowed) return blockedResult(request, compliance, now);
 
   const model = options.model ?? "claude-haiku-4-5";
   const client = options.client ?? (new Anthropic({ apiKey: options.apiKey }) as unknown as AnthropicClientLike);
@@ -491,5 +571,6 @@ export async function prepareOutreachWithAnthropic(
     complianceWarnings: compliance.warnings,
     evidenceUsed: draft.evidenceUsed,
     complianceReceipt: buildComplianceReceipt(request, now),
+    suggestedChannel: null,
   };
 }

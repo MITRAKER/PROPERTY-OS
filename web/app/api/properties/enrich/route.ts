@@ -26,7 +26,7 @@ export async function POST(request: Request) {
         console.error("Model-run logging failed:", logError);
       }
 
-      const updated = await enrichProperty(propertyId, context);
+      const updated = await enrichProperty(propertyId, context, report.signals);
       return Response.json({ property: updated, report, context });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Enrichment failed.";

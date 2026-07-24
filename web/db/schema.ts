@@ -59,6 +59,9 @@ export const properties = sqliteTable("properties", {
   assessedValue: integer("assessed_value"),
   yearBuilt: integer("year_built"),
   ownerMailingAddress: text("owner_mailing_address"),
+  // JSON-serialized AnalyzedSignal[] from analyzePropertyContext — real, cited
+  // public-record evidence, kept separate from the short `signals` chip labels.
+  intelligenceSignals: text("intelligence_signals"),
   enriched: integer("enriched", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),

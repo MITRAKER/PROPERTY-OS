@@ -86,6 +86,41 @@ test("flags cold outreach when there is no relationship history on file", () => 
   assert.deepEqual(result.evidenceUsed, []);
 });
 
+test("blocks a phone call outside 8am-9pm Eastern, but never blocks email/letter for time", () => {
+  const outsideHours = new Date("2026-07-22T03:00:00Z"); // 11pm ET
+  const insideHours = new Date("2026-07-22T14:00:00Z"); // 10am ET
+
+  const blocked = prepareOutreach(
+    { ...baseRequest, channel: "phone", permissions: { doNotContact: false, phoneAllowed: true } },
+    outsideHours,
+  );
+  assert.equal(blocked.allowed, false);
+  assert.match(blocked.complianceWarnings[0], /Outside permitted contact hours/);
+
+  const allowed = prepareOutreach(
+    { ...baseRequest, channel: "phone", permissions: { doNotContact: false, phoneAllowed: true } },
+    insideHours,
+  );
+  assert.equal(allowed.allowed, true);
+
+  const emailAtNight = prepareOutreach(baseRequest, outsideHours);
+  assert.equal(emailAtNight.allowed, true);
+});
+
+test("blocks outreach when the supplied evidence references a protected attribute", () => {
+  const result = prepareOutreach({
+    ...baseRequest,
+    propertyContext: {
+      address: "123 Main Street",
+      ownerName: "Mrs. Smith",
+      facts: ["Owner is 84 years old and recently widowed."],
+    },
+  });
+
+  assert.equal(result.allowed, false);
+  assert.match(result.complianceWarnings[0], /protected attribute/);
+});
+
 test("never invents property facts beyond what was provided", () => {
   const result = prepareOutreach({
     ...baseRequest,

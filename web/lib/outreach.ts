@@ -65,8 +65,40 @@ const CHANNEL_DEFAULT_ALLOWED: Record<Channel, boolean> = {
   letter: true,
 };
 
-export function checkCompliance(request: OutreachRequest): ComplianceCheck {
-  const { channel, permissions, relationshipContext } = request;
+// TCPA calling-hours rule: live calls/texts are only permitted 8am–9pm in the
+// contacted party's local time. We don't reliably know each owner's time zone,
+// so this gates on one configured business time zone (US Eastern, for NY).
+const QUIET_HOURS = { startHour: 8, endHour: 21 };
+const TIME_RESTRICTED_CHANNELS: Channel[] = ["phone", "text"];
+const DEFAULT_TIME_ZONE = "America/New_York";
+
+function hourInTimeZone(date: Date, timeZone: string): number {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", hour12: false }).formatToParts(date);
+    const value = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+    return value === 24 ? 0 : value;
+  } catch {
+    return date.getHours();
+  }
+}
+
+// Fair-housing guard: these traits must never ground an outreach draft, even if
+// they slipped into imported notes or CRM history.
+const PROTECTED_ATTRIBUTE_PATTERN =
+  /\b(?:race|religio(?:n|us)|disab(?:led|ility)|national\s+origin|ethnic(?:ity)?|\d{2,3}\s*years?\s*old|elderly|pregnan(?:t|cy)|familial\s+status|\bgender\b|\bsex\b)\b/i;
+
+function evidenceText(propertyContext: PropertyContext, relationshipContext: RelationshipContext): string {
+  return [
+    relationshipContext.lastConversation,
+    ...(relationshipContext.notes ?? []),
+    ...(propertyContext.facts ?? []),
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(" ");
+}
+
+export function checkCompliance(request: OutreachRequest, now: Date = new Date()): ComplianceCheck {
+  const { channel, permissions, propertyContext, relationshipContext } = request;
 
   if (permissions.doNotContact) {
     return { allowed: false, approvalRequired: false, warnings: ["The record is marked do not contact."] };
@@ -87,6 +119,26 @@ export function checkCompliance(request: OutreachRequest): ComplianceCheck {
       allowed: false,
       approvalRequired: false,
       warnings: [`No documented consent on file for ${channel} outreach.`],
+    };
+  }
+
+  if (TIME_RESTRICTED_CHANNELS.includes(channel)) {
+    const hour = hourInTimeZone(now, DEFAULT_TIME_ZONE);
+    const withinQuietHours = hour >= QUIET_HOURS.startHour && hour < QUIET_HOURS.endHour;
+    if (!withinQuietHours) {
+      return {
+        allowed: false,
+        approvalRequired: false,
+        warnings: [`Outside permitted contact hours (8am–9pm ${DEFAULT_TIME_ZONE}); ${channel} outreach is blocked right now.`],
+      };
+    }
+  }
+
+  if (PROTECTED_ATTRIBUTE_PATTERN.test(evidenceText(propertyContext, relationshipContext))) {
+    return {
+      allowed: false,
+      approvalRequired: false,
+      warnings: ["The supplied evidence references a protected attribute and cannot be used for outreach."],
     };
   }
 
@@ -220,8 +272,8 @@ function blockedResult(request: OutreachRequest, warnings: string[]): OutreachRe
   };
 }
 
-export function prepareOutreach(request: OutreachRequest): OutreachResult {
-  const compliance = checkCompliance(request);
+export function prepareOutreach(request: OutreachRequest, now: Date = new Date()): OutreachResult {
+  const compliance = checkCompliance(request, now);
   if (!compliance.allowed) return blockedResult(request, compliance.warnings);
 
   const draft = draftMessage(request.channel, request.propertyContext, request.relationshipContext);
@@ -327,9 +379,10 @@ function validateDraft(
 
 export async function prepareOutreachWithAnthropic(
   request: OutreachRequest,
-  options: { apiKey: string; model?: string; client?: AnthropicClientLike },
+  options: { apiKey: string; model?: string; client?: AnthropicClientLike; now?: Date },
 ): Promise<OutreachResult> {
-  const compliance = checkCompliance(request);
+  const now = options.now ?? new Date();
+  const compliance = checkCompliance(request, now);
   if (!compliance.allowed) return blockedResult(request, compliance.warnings);
 
   const model = options.model ?? "claude-haiku-4-5";

@@ -20,8 +20,11 @@ test("server-renders the Property OS workspace", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>Property OS \| Property Intelligence Workspace<\/title>/i);
-  assert.match(html, /Good morning/);
+  // First paint is the coverflow deck of section cards; a card's full content
+  // opens in the pop-up sheet, so it is deliberately not in the initial HTML.
+  assert.match(html, /class="card3d is-centre"/);
   assert.match(html, /Who to call first/);
+  assert.match(html, /Every home you track/);
   assert.match(html, /Nothing sends without your OK/);
   assert.doesNotMatch(html, /codex-preview|SkeletonPreview|react-loading-skeleton/);
   // No demo/sample content should ever be baked into the shipped HTML.

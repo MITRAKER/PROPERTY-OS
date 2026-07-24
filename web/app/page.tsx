@@ -1,12 +1,13 @@
 "use client";
 
-import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BriefingResult } from "../lib/briefing";
 import type { TaskRecord, PropertyRecord, PropertyStatus } from "../lib/property-model";
 import { computeNeighborhoodStats, projectCoordinates } from "../lib/insights";
 import { explainScore } from "../lib/scoring";
 import PropertyMap from "./PropertyMap";
 import { formatPhone } from "../lib/contacts/contact-model";
+import { isSpreadsheetFile, rowsToCsv, xlsxToRows } from "../lib/xlsx";
 
 type AppView = "briefing" | "properties" | "map" | "tasks" | "approvals" | "contacts" | "settings" | "workspace";
 
@@ -148,6 +149,18 @@ const navItems: Array<{ id: Exclude<AppView, "workspace">; number: string; label
   { id: "settings", number: "07", label: "Settings", hint: "Setup" },
 ];
 
+// Each section is a card in the horizontal deck. Photos are optional: drop files
+// into web/public/cards/ and they appear; without them the card keeps its tint.
+const cardArt: Record<string, { image: string; blurb: string }> = {
+  briefing: { image: "/cards/today.jpg", blurb: "Who to call first, ranked by real evidence." },
+  properties: { image: "/cards/properties.jpg", blurb: "Every home you track, organized by address." },
+  map: { image: "/cards/map.jpg", blurb: "Click any block to find new owners nearby." },
+  tasks: { image: "/cards/todo.jpg", blurb: "Your reminders and follow-ups for the week." },
+  approvals: { image: "/cards/messages.jpg", blurb: "Drafted outreach waiting for your OK." },
+  contacts: { image: "/cards/people.jpg", blurb: "The owners behind every address." },
+  settings: { image: "/cards/settings.jpg", blurb: "Data sources, delivery, and controls." },
+};
+
 const offerStatuses = ["presented", "accepted", "rejected", "withdrawn"] as const;
 
 const statusFilters: Array<{ value: "all" | PropertyStatus; label: string }> = [
@@ -268,8 +281,10 @@ export default function Home() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [listening, setListening] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const recognitionRef = useRef<{ stop: () => void } | null>(null);
+  const deckFlipAt = useRef(0);
 
   const selectedProperty = useMemo<PropertyRecord | undefined>(
     () => properties.find((property) => property.id === selectedId) ?? properties[0],
@@ -479,6 +494,7 @@ export default function Home() {
       if (event.key === "Escape") {
         setPaletteOpen(false);
         setNotifOpen(false);
+        setExpanded(false);
       }
     }
     window.addEventListener("keydown", onKey);
@@ -526,6 +542,51 @@ export default function Home() {
   function navigate(nextView: Exclude<AppView, "workspace">) {
     stopAudio();
     setView(nextView);
+  }
+
+  // --- Horizontal card deck -------------------------------------------------
+  // A property workspace is opened from the Properties card, so it shares its slot.
+  const deckIndex = Math.max(
+    0,
+    navItems.findIndex((item) => item.id === view || (view === "workspace" && item.id === "properties")),
+  );
+  const activeCard = navItems[deckIndex];
+
+  function goToCard(offset: number) {
+    const next = navItems[deckIndex + offset];
+    if (next) navigate(next.id);
+  }
+
+  // The live number each card carries, so a card states something true at a glance.
+  function cardMeta(id: string): string {
+    if (id === "briefing") return `${displayPriorities.length} to call today`;
+    if (id === "properties") return `${properties.length} tracked`;
+    if (id === "map") return `${placedProperties.length} located`;
+    if (id === "tasks") return `${remainingTasks} open`;
+    if (id === "approvals") return `${pendingApprovals.length} waiting for you`;
+    if (id === "contacts") return `${people.length} owners`;
+    return workspaceName || "Your workspace";
+  }
+
+  // Scrolling moves sideways through the deck. The active card still scrolls
+  // vertically first — only once it reaches an edge does the wheel flip cards.
+  function onDeckWheel(event: React.WheelEvent<HTMLDivElement>) {
+    const vertical = event.deltaY;
+    const horizontal = event.deltaX;
+    const step = Math.abs(horizontal) > Math.abs(vertical) ? horizontal : vertical;
+    if (step === 0) return;
+
+    const body = event.currentTarget.querySelector<HTMLElement>(".deck-card.is-active .deck-body");
+    if (body && Math.abs(vertical) >= Math.abs(horizontal)) {
+      const atTop = body.scrollTop <= 0;
+      const atBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 1;
+      if ((step < 0 && !atTop) || (step > 0 && !atBottom)) return;
+    }
+
+    const now = Date.now();
+    if (now - deckFlipAt.current < 550) return; // one card per gesture
+    deckFlipAt.current = now;
+    goToCard(step > 0 ? 1 : -1);
   }
 
   const refreshOffersAndDocs = useCallback(async (propertyId: string) => {
@@ -805,7 +866,19 @@ export default function Home() {
     if (!file) return;
     setError("");
     setFileName(file.name);
-    setCsvText(await file.text());
+    try {
+      if (isSpreadsheetFile(file.name, file.type)) {
+        // Excel is a zip of XML — convert it to CSV in the browser so it flows
+        // through the exact same importer a CSV does.
+        const rows = await xlsxToRows(await file.arrayBuffer());
+        setCsvText(rowsToCsv(rows));
+      } else {
+        setCsvText(await file.text());
+      }
+    } catch (caughtError) {
+      setCsvText("");
+      setError(caughtError instanceof Error ? caughtError.message : "That file could not be read.");
+    }
   }
 
   async function generate() {
@@ -1051,36 +1124,14 @@ export default function Home() {
 
   return (
     <main className="app-shell">
-      <aside className="sidebar">
-        <button className="brand" type="button" onClick={() => navigate("briefing")} aria-label="Open Property OS briefing">
-          <span className="brand-mark">P</span>
-          <span className="brand-copy"><strong>Property OS</strong><small>Property intelligence</small></span>
+      <aside className="icon-rail" aria-label="Quick actions">
+        <button type="button" onClick={() => { setPaletteOpen(true); setPaletteQuery(""); }} aria-label="Search properties" title="Search properties">⌕</button>
+        <button type="button" onClick={() => setNotifOpen((value) => !value)} aria-label={`Notifications (${notifications.length})`} title="Notifications">
+          ♡{notifications.length > 0 && <b>{notifications.length}</b>}
         </button>
-
-        <nav className="main-nav" aria-label="Primary navigation">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={view === item.id || (view === "workspace" && item.id === "properties") ? "active" : ""}
-              onClick={() => navigate(item.id)}
-            >
-              <span className="nav-label">{item.label}<em>{item.hint}</em></span>
-              {item.id === "tasks" && remainingTasks > 0 && <b>{remainingTasks}</b>}
-              {item.id === "approvals" && pendingApprovals.length > 0 && <b>{pendingApprovals.length}</b>}
-            </button>
-          ))}
-        </nav>
-
-        <div className="sidebar-status">
-          <span className="status-dot" />
-          <div><strong>{workspaceName || "Your workspace"}</strong><small>Nothing sends without your OK</small></div>
-        </div>
-        <div className="user-chip">
-          <span>{me ? me.displayName.slice(0, 2).toUpperCase() : "MK"}</span>
-          <div><strong>{me ? me.displayName : "Local session"}</strong><small>{me ? me.email : "Not signed in"}</small></div>
-          <button className="logout-button" type="button" onClick={logout} aria-label="Sign out" title="Sign out">⎋</button>
-        </div>
+        <button type="button" onClick={logout} aria-label="Sign out" title={me ? `Sign out ${me.displayName}` : "Sign out"}>
+          {me ? me.displayName.slice(0, 2).toUpperCase() : "MK"}
+        </button>
       </aside>
 
       <section className="app-stage">
@@ -1142,6 +1193,85 @@ export default function Home() {
             </div>
           </div>
         )}
+
+        <nav className="deck-tabs" aria-label="Sections">
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={item.id === activeCard?.id ? "on" : ""}
+              onClick={() => navigate(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="deck" onWheel={onDeckWheel}>
+          <div className="deck-stage">
+            {navItems.map((item, index) => {
+              const offset = index - deckIndex;
+              const isCentre = offset === 0;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`card3d${isCentre ? " is-centre" : ""}`}
+                  style={{ "--offset": offset, zIndex: 20 - Math.abs(offset) } as CSSProperties}
+                  aria-current={isCentre ? "true" : undefined}
+                  aria-label={isCentre ? `Open ${item.label}` : `Bring ${item.label} to the front`}
+                  onClick={() => (isCentre ? setExpanded(true) : navigate(item.id))}
+                >
+                  <span className="card3d-photo" style={{ backgroundImage: `url(${cardArt[item.id]?.image ?? ""})` }}>
+                    {isCentre && <span className="card3d-expand">⤢ Expand</span>}
+                  </span>
+                  <span className="card3d-copy">
+                    <span className="card3d-title">
+                      <strong>{item.label}</strong>
+                      <em>{index + 1} / {navItems.length}</em>
+                    </span>
+                    <p>{cardArt[item.id]?.blurb}</p>
+                    <span className="card3d-meta">{item.hint} · {cardMeta(item.id)}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <nav className="deck-rail" aria-label="Card navigation">
+          <button type="button" onClick={() => goToCard(-1)} disabled={deckIndex === 0} aria-label="Previous card">‹</button>
+          <span
+            className="deck-rail-thumb"
+            style={{ backgroundImage: `url(${cardArt[activeCard?.id ?? "briefing"]?.image ?? ""})` }}
+            aria-hidden="true"
+          />
+          <span className="deck-rail-now">
+            <strong>{workspaceName || "Your workspace"}</strong>
+            <small>{activeCard?.label}</small>
+            <small>Nothing sends without your OK</small>
+          </span>
+          <button type="button" className="deck-heart" onClick={() => setExpanded(true)} aria-label={`Open ${activeCard?.label}`}>♡</button>
+          <button type="button" onClick={() => goToCard(1)} disabled={deckIndex === navItems.length - 1} aria-label="Next card">›</button>
+        </nav>
+
+        <span className="deck-dots" aria-hidden="true">
+          {navItems.map((item, index) => (
+            <i key={item.id} className={index === deckIndex ? "on" : ""} />
+          ))}
+        </span>
+
+        {expanded && (
+          <div className="sheet-scrim" role="dialog" aria-modal="true" aria-label={activeCard?.label} onClick={() => setExpanded(false)}>
+            <div className="sheet" onClick={(event) => event.stopPropagation()}>
+              <header className="sheet-head">
+                <div>
+                  <p className="overline">{deckIndex + 1} / {navItems.length}</p>
+                  <h2>{activeCard?.label}</h2>
+                </div>
+                <button type="button" onClick={() => setExpanded(false)} aria-label="Close">✕</button>
+              </header>
+              <div className="sheet-body">
 
         {view === "briefing" && (
           <div className="view-content briefing-view">
@@ -1213,11 +1343,11 @@ export default function Home() {
                 <div>
                   <p className="overline">AI import</p>
                   <h2 id="import-heading">Turn messy notes into today&apos;s plan</h2>
-                  <p>Upload a CSV with address and notes. Do-not-contact records are removed before ranking and stored as real property workspaces.</p>
+                  <p>Upload any CSV of leads — Property OS works out which columns hold the addresses, owners, dates, and notes, whatever they’re called. Do-not-contact records are removed before ranking.</p>
                 </div>
                 <label className="compact-upload" htmlFor="lead-file">
-                  <span>CSV</span><strong>{fileName || "Choose lead file"}</strong>
-                  <input id="lead-file" data-testid="lead-file" type="file" accept=".csv,text/csv" onChange={handleFile} />
+                  <span>{/\.xlsx?$/i.test(fileName) ? "XLSX" : "CSV"}</span><strong>{fileName || "Choose a CSV or Excel file"}</strong>
+                  <input id="lead-file" data-testid="lead-file" type="file" accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" onChange={handleFile} />
                 </label>
                 <div className="import-actions">
                   <button className="primary-action" type="button" onClick={generate} disabled={!csvText || loading}>{loading ? "Analyzing..." : "Generate briefing"}</button>
@@ -1868,6 +1998,11 @@ export default function Home() {
                 </section>
                 <section className="panel add-note-card"><p className="overline">Add to timeline</p><label><span className="sr-only">New property note</span><textarea value={noteInput} onChange={(event) => setNoteInput(event.target.value)} placeholder="Type a note about this property..." /></label><button className="primary-action" type="button" onClick={addNote} disabled={!noteInput.trim()}>Add note</button><small>Notes are saved to the property timeline.</small></section>
               </aside>
+            </div>
+          </div>
+        )}
+
+              </div>
             </div>
           </div>
         )}

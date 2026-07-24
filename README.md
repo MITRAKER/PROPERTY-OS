@@ -34,11 +34,9 @@ Copy the environment template and add the class key when it is available:
 Copy-Item .env.example .env.local
 ```
 
-Open `http://localhost:3000`. The workspace starts **empty** (no demo data). Click **Import leads** and upload the sample file at [`web/tests/fixtures/messy-leads.csv`](web/tests/fixtures/messy-leads.csv), or your own CSV with these columns:
+Open `http://localhost:3000`. The workspace starts **empty** (no demo data). Click **Import leads** and upload the sample file at [`web/tests/fixtures/messy-leads.csv`](web/tests/fixtures/messy-leads.csv), or **any CSV of your own** — there are no required column names.
 
-```text
-address,owner_name,last_contact,follow_up_date,notes
-```
+Property OS recognizes the file rather than imposing a schema: it matches headers loosely (`Property Address`, `Seller`, `Comments`, `Last Touch`… all resolve), and for anything the headers don't reveal it infers the column from the data — addresses by their shape, owners by name-like values, dates by parseability, and notes by being the free-text column. Files exported **without a header row** import too. Only a column containing addresses is genuinely needed, since the whole product is organized by address.
 
 `ANTHROPIC_API_KEY` is optional — without it, the agents use a labeled deterministic fallback, so the app works offline.
 

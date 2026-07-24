@@ -433,6 +433,15 @@ async function rowToPropertyRecord(db: Db, row: typeof properties.$inferSelect):
     type: (event.type as PropertyTimelineEvent["type"]) ?? "note",
   }));
 
+  return buildPropertyRecord(row, signalRows.map((signal) => signal.value), timeline);
+}
+
+// Pure mapper, so a single property and a whole list can share one shape.
+function buildPropertyRecord(
+  row: typeof properties.$inferSelect,
+  signalValues: string[],
+  timeline: PropertyTimelineEvent[],
+): PropertyRecord {
   return {
     id: row.id,
     address: row.address,
@@ -447,7 +456,7 @@ async function rowToPropertyRecord(db: Db, row: typeof properties.$inferSelect):
     followUpDate: row.followUpDate,
     nextAction: row.nextAction,
     summary: row.summary,
-    signals: signalRows.map((signal) => signal.value),
+    signals: signalValues,
     timeline,
     mapClass: row.mapClass,
     latitude: row.latitude,
@@ -461,10 +470,50 @@ async function rowToPropertyRecord(db: Db, row: typeof properties.$inferSelect):
   };
 }
 
+// Loads the whole list in three queries. Fetching signals and timeline per
+// property is an N+1 that made a real import (thousands of rows) unusable.
 export async function listProperties(): Promise<PropertyRecord[]> {
   const db = await ready();
-  const rows = await db.select().from(properties).where(eq(properties.workspaceId, ws())).orderBy(desc(properties.score));
-  return Promise.all(rows.map((row) => rowToPropertyRecord(db, row)));
+  const workspaceId = ws();
+  const rows = await db
+    .select()
+    .from(properties)
+    .where(eq(properties.workspaceId, workspaceId))
+    .orderBy(desc(properties.score));
+  if (rows.length === 0) return [];
+
+  const [signalRows, eventRows] = await Promise.all([
+    db.select().from(signals).where(eq(signals.workspaceId, workspaceId)),
+    db
+      .select()
+      .from(timelineEvents)
+      .where(eq(timelineEvents.workspaceId, workspaceId))
+      .orderBy(desc(timelineEvents.createdAt), desc(timelineEvents.id)),
+  ]);
+
+  const signalsByProperty = new Map<string, string[]>();
+  for (const signal of signalRows) {
+    const list = signalsByProperty.get(signal.propertyId);
+    if (list) list.push(signal.value);
+    else signalsByProperty.set(signal.propertyId, [signal.value]);
+  }
+
+  const timelineByProperty = new Map<string, PropertyTimelineEvent[]>();
+  for (const event of eventRows) {
+    const entry: PropertyTimelineEvent = {
+      date: event.eventDate || "Recent",
+      title: event.title,
+      detail: event.detail,
+      type: (event.type as PropertyTimelineEvent["type"]) ?? "note",
+    };
+    const list = timelineByProperty.get(event.propertyId);
+    if (list) list.push(entry);
+    else timelineByProperty.set(event.propertyId, [entry]);
+  }
+
+  return rows.map((row) =>
+    buildPropertyRecord(row, signalsByProperty.get(row.id) ?? [], timelineByProperty.get(row.id) ?? []),
+  );
 }
 
 export async function getProperty(id: string): Promise<PropertyRecord | null> {

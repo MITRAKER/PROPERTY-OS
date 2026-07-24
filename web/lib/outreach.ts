@@ -22,6 +22,19 @@ export type Permissions = {
   textAllowed?: boolean;
   letterAllowed?: boolean;
   consentOnFile?: boolean;
+  // Whether this contact has been scrubbed against the National Do Not Call
+  // Registry (a paid, FTC-subscriber-only lookup we don't call directly).
+  // Required for phone/text; defaults to unverified (blocked) if omitted.
+  nationalDncChecked?: boolean;
+};
+
+// Lets a caller override the default federal quiet-hours window per request
+// (e.g. keyed off the property's state), without hardcoding specific state
+// laws here — those should come from the client's own legal/compliance review.
+export type Jurisdiction = {
+  timeZone?: string;
+  quietHoursStart?: number;
+  quietHoursEnd?: number;
 };
 
 export type OutreachRequest = {
@@ -30,6 +43,24 @@ export type OutreachRequest = {
   propertyContext: PropertyContext;
   relationshipContext: RelationshipContext;
   permissions: Permissions;
+  jurisdiction?: Jurisdiction;
+};
+
+// A permanent, exportable audit record: every check that ran, whether it
+// passed, and why — for both allowed and blocked drafts. This is what lets a
+// brokerage prove, after the fact, that do-not-contact/consent/quiet-hours/
+// channel-permission were actually checked before a draft was ever produced.
+export type ComplianceCheckRecord = {
+  name: string;
+  passed: boolean;
+  detail: string;
+};
+
+export type ComplianceReceipt = {
+  checkedAt: string;
+  propertyId: string;
+  channel: Channel;
+  checks: ComplianceCheckRecord[];
 };
 
 export type OutreachResult = {
@@ -41,12 +72,18 @@ export type OutreachResult = {
   message: string | null;
   complianceWarnings: string[];
   evidenceUsed: string[];
+  complianceReceipt: ComplianceReceipt;
+  // Populated only when blocked for a channel- or time-specific reason (not
+  // do-not-contact/consent/protected-attribute, which block every channel) and
+  // another channel is actually permitted right now.
+  suggestedChannel: Channel | null;
 };
 
 type ComplianceCheck = {
   allowed: boolean;
   approvalRequired: boolean;
   warnings: string[];
+  failedCheck?: string;
 };
 
 // Letters carry a lower regulatory bar than TCPA-covered phone/text or CAN-SPAM email,
@@ -65,38 +102,214 @@ const CHANNEL_DEFAULT_ALLOWED: Record<Channel, boolean> = {
   letter: true,
 };
 
-export function checkCompliance(request: OutreachRequest): ComplianceCheck {
-  const { channel, permissions, relationshipContext } = request;
+// TCPA calling-hours rule: live calls/texts are only permitted 8am–9pm in the
+// contacted party's local time. We don't reliably know each owner's time zone,
+// so this gates on one configured business time zone (US Eastern, for NY).
+const QUIET_HOURS = { startHour: 8, endHour: 21 };
+const TIME_RESTRICTED_CHANNELS: Channel[] = ["phone", "text"];
+const DEFAULT_TIME_ZONE = "America/New_York";
 
-  if (permissions.doNotContact) {
-    return { allowed: false, approvalRequired: false, warnings: ["The record is marked do not contact."] };
+function hourInTimeZone(date: Date, timeZone: string): number {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", hour12: false }).formatToParts(date);
+    const value = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+    return value === 24 ? 0 : value;
+  } catch {
+    return date.getHours();
   }
+}
 
-  const channelPermission = permissions[CHANNEL_PERMISSION_KEY[channel]];
-  const channelAllowed = channelPermission ?? CHANNEL_DEFAULT_ALLOWED[channel];
-  if (!channelAllowed) {
-    return {
-      allowed: false,
-      approvalRequired: false,
-      warnings: [`No documented permission for ${channel} outreach.`],
-    };
-  }
+// Fair-housing guard: these traits must never ground an outreach draft, even if
+// they slipped into imported notes or CRM history.
+const PROTECTED_ATTRIBUTE_PATTERN =
+  /\b(?:race|religio(?:n|us)|disab(?:led|ility)|national\s+origin|ethnic(?:ity)?|\d{2,3}\s*years?\s*old|elderly|pregnan(?:t|cy)|familial\s+status|\bgender\b|\bsex\b)\b/i;
 
-  if (permissions.consentOnFile === false) {
-    return {
-      allowed: false,
-      approvalRequired: false,
-      warnings: [`No documented consent on file for ${channel} outreach.`],
-    };
-  }
+function evidenceText(propertyContext: PropertyContext, relationshipContext: RelationshipContext): string {
+  return [
+    relationshipContext.lastConversation,
+    ...(relationshipContext.notes ?? []),
+    ...(propertyContext.facts ?? []),
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(" ");
+}
 
-  const warnings: string[] = [];
-  const hasRelationshipHistory = Boolean(
+function hasRelationshipHistory(relationshipContext: RelationshipContext): boolean {
+  return Boolean(
     relationshipContext.lastConversation
       || relationshipContext.relationshipStatus
       || (relationshipContext.notes && relationshipContext.notes.length > 0),
   );
-  if (!hasRelationshipHistory) {
+}
+
+// Each check below is a pure, individually-auditable rule. checkCompliance()
+// runs them in priority order and stops at the first block (so a caller sees
+// one clear reason); buildComplianceReceipt() runs every one of them
+// unconditionally, so the receipt always shows the full picture regardless of
+// which check actually blocked the request.
+
+function checkDoNotContactRule(permissions: Permissions): ComplianceCheckRecord {
+  const passed = !permissions.doNotContact;
+  return {
+    name: "do_not_contact",
+    passed,
+    detail: passed ? "No do-not-contact restriction on file." : "The record is marked do not contact.",
+  };
+}
+
+function checkChannelPermissionRule(channel: Channel, permissions: Permissions): ComplianceCheckRecord {
+  const channelPermission = permissions[CHANNEL_PERMISSION_KEY[channel]];
+  const passed = channelPermission ?? CHANNEL_DEFAULT_ALLOWED[channel];
+  return {
+    name: "channel_permission",
+    passed,
+    detail: passed
+      ? `The ${channel} channel is permitted for this property.`
+      : `No documented permission for ${channel} outreach.`,
+  };
+}
+
+function checkConsentRule(channel: Channel, permissions: Permissions): ComplianceCheckRecord {
+  const passed = permissions.consentOnFile !== false;
+  return {
+    name: "consent",
+    passed,
+    detail: passed
+      ? "No documented consent withdrawal on file."
+      : `No documented consent on file for ${channel} outreach.`,
+  };
+}
+
+function checkQuietHoursRule(channel: Channel, now: Date, jurisdiction?: Jurisdiction): ComplianceCheckRecord {
+  if (!TIME_RESTRICTED_CHANNELS.includes(channel)) {
+    return { name: "quiet_hours", passed: true, detail: "Quiet-hours rule does not apply to this channel." };
+  }
+  const timeZone = jurisdiction?.timeZone ?? DEFAULT_TIME_ZONE;
+  const startHour = jurisdiction?.quietHoursStart ?? QUIET_HOURS.startHour;
+  const endHour = jurisdiction?.quietHoursEnd ?? QUIET_HOURS.endHour;
+  const hour = hourInTimeZone(now, timeZone);
+  const passed = hour >= startHour && hour < endHour;
+  const window = `${startHour}:00–${endHour}:00 ${timeZone}`;
+  return {
+    name: "quiet_hours",
+    passed,
+    detail: passed
+      ? `Within permitted contact hours (${window}).`
+      : `Outside permitted contact hours (${window}); ${channel} outreach is blocked right now.`,
+  };
+}
+
+function checkNationalDncRule(channel: Channel, permissions: Permissions): ComplianceCheckRecord {
+  if (!TIME_RESTRICTED_CHANNELS.includes(channel)) {
+    return { name: "national_dnc_registry", passed: true, detail: "National DNC Registry scrub does not apply to this channel." };
+  }
+  const passed = permissions.nationalDncChecked === true;
+  return {
+    name: "national_dnc_registry",
+    passed,
+    detail: passed
+      ? "This contact has been scrubbed against the National Do Not Call Registry."
+      : "This contact has not been confirmed scrubbed against the National Do Not Call Registry.",
+  };
+}
+
+function checkProtectedAttributeRule(propertyContext: PropertyContext, relationshipContext: RelationshipContext): ComplianceCheckRecord {
+  const flagged = PROTECTED_ATTRIBUTE_PATTERN.test(evidenceText(propertyContext, relationshipContext));
+  return {
+    name: "protected_attribute_usage",
+    passed: !flagged,
+    detail: flagged
+      ? "The supplied evidence references a protected attribute and cannot be used for outreach."
+      : "No protected attributes were used as a signal.",
+  };
+}
+
+function checkExistingRelationshipRule(relationshipContext: RelationshipContext): ComplianceCheckRecord {
+  const known = hasRelationshipHistory(relationshipContext);
+  return {
+    // Informational only — absence never blocks outreach, it just lowers confidence.
+    name: "existing_relationship",
+    passed: true,
+    detail: known
+      ? "A prior relationship is on record with this owner."
+      : "No prior relationship history on file; treat as first-touch outreach.",
+  };
+}
+
+export function buildComplianceReceipt(request: OutreachRequest, now: Date = new Date()): ComplianceReceipt {
+  const { propertyId, channel, permissions, propertyContext, relationshipContext, jurisdiction } = request;
+  return {
+    checkedAt: now.toISOString(),
+    propertyId,
+    channel,
+    checks: [
+      checkDoNotContactRule(permissions),
+      checkChannelPermissionRule(channel, permissions),
+      checkConsentRule(channel, permissions),
+      checkQuietHoursRule(channel, now, jurisdiction),
+      checkNationalDncRule(channel, permissions),
+      checkProtectedAttributeRule(propertyContext, relationshipContext),
+      checkExistingRelationshipRule(relationshipContext),
+    ],
+  };
+}
+
+// Channels tried, in order, when suggesting an alternative to a blocked one.
+// Email/letter first since neither is time-restricted, making them the
+// safest universal fallback.
+const CHANNEL_FALLBACK_ORDER: Channel[] = ["email", "letter", "phone", "text"];
+
+// Only these failures are channel- or time-specific; do-not-contact, consent,
+// and protected-attribute apply to the whole record, so no other channel would
+// help and no suggestion should be offered.
+const CHANNEL_SPECIFIC_FAILURES = new Set(["channel_permission", "quiet_hours", "national_dnc_registry"]);
+
+function suggestAlternateChannel(request: OutreachRequest, now: Date): Channel | null {
+  for (const candidate of CHANNEL_FALLBACK_ORDER) {
+    if (candidate === request.channel) continue;
+    const channelOk = checkChannelPermissionRule(candidate, request.permissions).passed;
+    const quietOk = checkQuietHoursRule(candidate, now, request.jurisdiction).passed;
+    const dncOk = checkNationalDncRule(candidate, request.permissions).passed;
+    if (channelOk && quietOk && dncOk) return candidate;
+  }
+  return null;
+}
+
+export function checkCompliance(request: OutreachRequest, now: Date = new Date()): ComplianceCheck {
+  const { channel, permissions, relationshipContext, jurisdiction } = request;
+
+  const doNotContact = checkDoNotContactRule(permissions);
+  if (!doNotContact.passed) {
+    return { allowed: false, approvalRequired: false, warnings: [doNotContact.detail], failedCheck: doNotContact.name };
+  }
+
+  const channelPermission = checkChannelPermissionRule(channel, permissions);
+  if (!channelPermission.passed) {
+    return { allowed: false, approvalRequired: false, warnings: [channelPermission.detail], failedCheck: channelPermission.name };
+  }
+
+  const consent = checkConsentRule(channel, permissions);
+  if (!consent.passed) {
+    return { allowed: false, approvalRequired: false, warnings: [consent.detail], failedCheck: consent.name };
+  }
+
+  const quietHours = checkQuietHoursRule(channel, now, jurisdiction);
+  if (!quietHours.passed) {
+    return { allowed: false, approvalRequired: false, warnings: [quietHours.detail], failedCheck: quietHours.name };
+  }
+
+  const nationalDnc = checkNationalDncRule(channel, permissions);
+  if (!nationalDnc.passed) {
+    return { allowed: false, approvalRequired: false, warnings: [nationalDnc.detail], failedCheck: nationalDnc.name };
+  }
+
+  const protectedAttribute = checkProtectedAttributeRule(request.propertyContext, relationshipContext);
+  if (!protectedAttribute.passed) {
+    return { allowed: false, approvalRequired: false, warnings: [protectedAttribute.detail], failedCheck: protectedAttribute.name };
+  }
+
+  const warnings: string[] = [];
+  if (!hasRelationshipHistory(relationshipContext)) {
     warnings.push("No prior relationship history on file; treat as first-touch outreach.");
   }
 
@@ -207,7 +420,11 @@ export function draftMessage(
   }
 }
 
-function blockedResult(request: OutreachRequest, warnings: string[]): OutreachResult {
+function blockedResult(request: OutreachRequest, compliance: ComplianceCheck, now: Date): OutreachResult {
+  const suggestedChannel = compliance.failedCheck && CHANNEL_SPECIFIC_FAILURES.has(compliance.failedCheck)
+    ? suggestAlternateChannel(request, now)
+    : null;
+
   return {
     propertyId: request.propertyId,
     channel: request.channel,
@@ -215,14 +432,16 @@ function blockedResult(request: OutreachRequest, warnings: string[]): OutreachRe
     approvalRequired: false,
     subject: null,
     message: null,
-    complianceWarnings: warnings,
+    complianceWarnings: compliance.warnings,
     evidenceUsed: [],
+    complianceReceipt: buildComplianceReceipt(request, now),
+    suggestedChannel,
   };
 }
 
-export function prepareOutreach(request: OutreachRequest): OutreachResult {
-  const compliance = checkCompliance(request);
-  if (!compliance.allowed) return blockedResult(request, compliance.warnings);
+export function prepareOutreach(request: OutreachRequest, now: Date = new Date()): OutreachResult {
+  const compliance = checkCompliance(request, now);
+  if (!compliance.allowed) return blockedResult(request, compliance, now);
 
   const draft = draftMessage(request.channel, request.propertyContext, request.relationshipContext);
 
@@ -235,6 +454,8 @@ export function prepareOutreach(request: OutreachRequest): OutreachResult {
     message: draft.message,
     complianceWarnings: compliance.warnings,
     evidenceUsed: draft.evidenceUsed,
+    complianceReceipt: buildComplianceReceipt(request, now),
+    suggestedChannel: null,
   };
 }
 
@@ -327,10 +548,11 @@ function validateDraft(
 
 export async function prepareOutreachWithAnthropic(
   request: OutreachRequest,
-  options: { apiKey: string; model?: string; client?: AnthropicClientLike },
+  options: { apiKey: string; model?: string; client?: AnthropicClientLike; now?: Date },
 ): Promise<OutreachResult> {
-  const compliance = checkCompliance(request);
-  if (!compliance.allowed) return blockedResult(request, compliance.warnings);
+  const now = options.now ?? new Date();
+  const compliance = checkCompliance(request, now);
+  if (!compliance.allowed) return blockedResult(request, compliance, now);
 
   const model = options.model ?? "claude-haiku-4-5";
   const client = options.client ?? (new Anthropic({ apiKey: options.apiKey }) as unknown as AnthropicClientLike);
@@ -348,5 +570,7 @@ export async function prepareOutreachWithAnthropic(
     message: draft.message,
     complianceWarnings: compliance.warnings,
     evidenceUsed: draft.evidenceUsed,
+    complianceReceipt: buildComplianceReceipt(request, now),
+    suggestedChannel: null,
   };
 }
